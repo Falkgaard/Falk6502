@@ -19,7 +19,7 @@
 
 using u8  = std::uint8_t;
 using u16 = std::uint16_t;
-
+using u32 = std::uint32_t;
 using u64 = std::uint64_t;
 
 using i8  = std::int8_t;
@@ -34,6 +34,7 @@ using f32 = float;
 // TODO: memcopy command-line arg ROM file into system RAM
 // TODO: do more testing	
 // TODO: handle under/overflow in stack?
+// TODO: keep track of last written + clear later
 
 [[nodiscard]] inline auto
 timer() noexcept -> f32
@@ -135,7 +136,9 @@ namespace cpu {
 		u16 Hz = 3000; // clock speed
 		
 		// Just used for meta insight
-		u64 cc = 0;// cycle count
+		u64 cc              = 0; // cycle count
+		u32 last_write_addr = -1;
+		u16 last_push_addr  = -1;
 		std::string last_op = "";
 		
 		inline void
@@ -199,6 +202,7 @@ struct system_t {
 	inline void
 	push( u8 const byte ) noexcept
 	{
+		CPU.last_push_addr = CPU.SP;
 		// TODO: optional overflow guard? wrap?
 		RAM[0x0100 + CPU.SP++] = byte; // TODO: verify
 	}
@@ -206,6 +210,7 @@ struct system_t {
 	inline void
 	push_addr( u16 const addr ) noexcept
 	{
+		CPU.last_push_addr = CPU.SP;
 		// TODO: optional overflow guard? wrap?
 		RAM[0x0100 + CPU.SP++] = addr >> 8;
 		RAM[0x0100 + CPU.SP++] = addr  & 0xFF;
@@ -1667,7 +1672,7 @@ struct ram_page_hex_display_t {
 			std::printf( "│" DIM_CLR "%02" PRIX8 BRT_CLR "%1" PRIX8 DIM_CLR "0" BORDER " ┃", page_no, row );
 			for ( u8 col=0; col<0x10; ++col ) {
 				auto const curr_byte = system->RAM[curr_addr++];
-				std::printf( "\e[1;%sm%02" PRIX8 "%s", (curr_addr==system->CPU.PC? "40;93" : curr_byte? "32":"31"), curr_byte, col==0xF?"\e[0m":" " );
+				std::printf( "\e[1;%sm%02" PRIX8 "\e[0m%s", (curr_addr==system->CPU.PC? "1;40;93" : curr_byte? "32":"31"), curr_byte, col==0xF?"\e[0m":" " );
 			}
 			std::printf( "│" "\033[B\033[55D" );
 		}
@@ -1681,9 +1686,9 @@ int
 main( int const argc, char const *const argv[] )
 {
 	auto system   = system_t {};
-	auto terminal = terminal_display_t<80,25> { system.RAM + 0x0200, 2,1 };
-	auto dbg_cpu1 = cpu_debug_15x10_display_t { &system.CPU, 124,0 };
-	auto dbg_cpu2 = cpu_debug_82x4_display_t  { &system.CPU, 0,27 };
+	auto terminal = terminal_display_t<80,25> {  system.RAM+0x0200,    2,1  };
+	auto dbg_cpu1 = cpu_debug_15x10_display_t { &system.CPU,         124,0  };
+	auto dbg_cpu2 = cpu_debug_82x4_display_t  { &system.CPU,           0,27 };
 	
 	u8 constexpr pg_x=2, pg_y=2;
 	ram_page_hex_display_t  hex_page_displays[pg_x * pg_y] {};
