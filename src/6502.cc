@@ -7,6 +7,9 @@
 
 #include <string>
 #include <chrono>
+#include <thread>
+
+using namespace::std::literals;
 
 #include <unistd.h> // for usleep
 //#include <ctime>    // for dt
@@ -53,8 +56,18 @@ struct keyboard_t {
 	update() noexcept
 	{
 		assert( port );
-		u8 keycode = 0; // TODO: read key press
-		*port      = keycode;
+		while (1) {
+			system("stty raw");
+			*port = getchar(); 
+			// terminate when "." is pressed
+			system("stty cooked");
+			system("clear");
+			std::printf( "\033[99;0H" LABEL "Last keypress: " BRT_CLR "'%c'\033[0m", *port ); // TODO: refactor
+			if ( *port == '.' ) {
+				system("stty cooked");
+				exit(0);
+			}  
+		}
 	}
 	u8 *port = nullptr;
 };
@@ -82,37 +95,7 @@ init_rst( char *rst, u8 const width, u8 const height )
 	std::snprintf( rst, 3, "\033[H" );
 	return true;
 }
-
-template <u8 width, u8 height>
-struct terminal_display_t {
-	void
-	update() noexcept
-	{
-		static char hdr[3*(width+2)+1],
-		            ftr[3*(width+2)+1];
-		
-		static bool all_initialized = {
-			init_hdr(hdr,width) and
-			init_ftr(ftr,width)
-		}; (void) all_initialized;
-		
-		constexpr u16 last_row_addr = (height-1) * width;
-		
-		assert( block_start );
-		std::printf( "\033[?25l\033[%u;%uH" "%s" "\033[B\033[%uD", y, x, hdr, width+2 ); 
-		for ( u16 row_addr_offset  = 0;
-		          row_addr_offset  < last_row_addr;
-		          row_addr_offset += width )
-		{
-			std::printf( "│%-*s│" "\033[B\033[%uD", width, block_start + row_addr_offset, width+2 );
-		}
-		std::puts( ftr );
-	}
 	
-	u8 const *block_start = nullptr;
-	u8 x=0, y=0;
-};
-
 namespace cpu {
 	enum cpu_flag_e: u8 {
 		C  = 0, // Carry
@@ -326,10 +309,10 @@ struct system_t {
 	{
 		using namespace cpu;
 		if ( CPU.read_flag(D) ) { // BCD mode
-			u8  tmp_l = CPU.A&0x0F + byte&0x0F;
+			u8  tmp_l = (CPU.A&0x0F) + (byte&0x0F);
 			if ( tmp_l > 0x09 )
 				tmp_l += 0x06;
-			u16 tmp = CPU.A&0xF0 + byte&0xF0 + tmp_l;
+			u16 tmp = (CPU.A&0xF0) + (byte&0xF0) + tmp_l;
 			CPU.set_flag( C, tmp > 0x99 );
 			CPU.A = tmp & 0xFF;
 		}
@@ -460,1121 +443,1128 @@ struct system_t {
 		using namespace cpu;
 		static u8 cycles = 0;
 		
-		// TODO: fix cycle elapse pre OP side-effects instead of post
-		if ( cycles ) {
-			auto cycle_length_us = (int)(1000000.0f / CPU.Hz);
-			usleep( cycle_length_us );
-			--cycles;
-			++CPU.cc;
-			return;
-		}
-		
-		u8 instruction = RAM[CPU.PC++];
-		
-		switch (instruction)
-		{
-			// BRK impl
-			case 0x00: {
-				CPU.last_op = "BRK impl";
-				cycles      = 7;
-				CPU.PC      = (RAM[0xFFFF] << 8) + RAM[0xFFFE]; // TODO: verify
-				CPU.set_flag( I, 1 );
-				push( CPU.PC );
-				push( CPU.P  );
-				while(1); // TODO: remove
-			} break; 
+		while (1) {
+			// TODO: fix cycle elapse pre OP side-effects instead of post
 			
-			// ORA X,ind
-			case 0x01: {
-				CPU.last_op = "ORA X,ind";
-				cycles      = 6;
-				ORA( read_ind_x() );
-			} break;
+			u8 instruction = RAM[CPU.PC++];
 			
-			// ORA zpg
-			case 0x05: {
-				CPU.last_op = "ORA zpg";
-				cycles      = 3;
-				ORA( read_zpg() );
-			} break;
-			
-			// ASL zpg
-			case 0x06: {
-				CPU.last_op = "ASL zpg";
-				cycles      = 5;
-				ASL( read_zpg() );
-			} break;
-			
-			// PHP impl
-			case 0x08: {
-				CPU.last_op = "PHP impl";
-				cycles      = 3;
-				push( CPU.P );
-			} break;
-			
-			// ORA imm
-			case 0x09: {
-				CPU.last_op = "ORA imm";
-				cycles      = 2;
-				ORA( read_imm() );
-			} break;
-			
-			// ASL acc
-			case 0x0A: {
-				CPU.last_op = "ASL acc";
-				cycles      = 2;
-				ASL( CPU.A );
-			} break;
-			
-			// ORA abs
-			case 0x0D: {
-				CPU.last_op = "ORA abs";
-				cycles      = 4;
-				ORA( read_abs() );
-			} break;
-			
-			// ASL abs
-			case 0x0E: {
-				CPU.last_op = "ASL abs";
-				cycles      = 6;
-				ASL( read_abs() );
-			} break;
-			
-			// BPL rel
-			case 0x10: {
-				CPU.last_op = "BPL rel";
-				cycles      = 2;
-				if ( !CPU.read_flag(N) )
-					cycles += rel_jmp()? 2 : 1; 
-			} break;
-			
-			// ORA ind,Y
-			case 0x11: {
-				CPU.last_op = "ORA ind,Y";
-				cycles      = 5;
-				ORA( read_ind_y(cycles) );
-			} break;
-			
-			// ORA zpg,X
-			case 0x15: {
-				CPU.last_op = "ORA zpg,X";
-				cycles      = 4;
-				ORA( read_zpg_x() );
-			} break;
-			
-			// ASL zpg,X
-			case 0x16: {
-				CPU.last_op = "ASL zpg,X";
-				cycles      = 6;
-				ASL( read_zpg_x() );
-			} break;
-			
-			// CLC impl
-			case 0x18: {
-				CPU.last_op = "CLC impl";
-				cycles      = 2;
-				CPU.clear_flag( C );
-			} break;
-			
-			// ORA abs,Y
-			case 0x19: {
-				CPU.last_op = "ORA abs,Y";
-				cycles      = 4;
-				ORA( read_abs_y(cycles) );
-			} break;
-			
-			// ORA abs,X
-			case 0x1D: {
-				CPU.last_op = "ORA abs,X";
-				cycles      = 4;
-				ORA( read_abs_x(cycles) );
-			} break;
-			
-			// ASL abs,X
-			case 0x1E: {
-				CPU.last_op = "ASL abs,X";
-				cycles      = 7;
-				u8 dummy;
-				ASL( read_abs_x(dummy) ); // TODO: clean up
-			} break;
-			
-			// JSR abs
-			case 0x20: {
-				CPU.last_op = "JSR abs";
-				cycles      = 6;
-				push_addr( CPU.PC+2 );
-				CPU.PC      = read_addr();
-			} break;
-			
-			// AND ind,X
-			case 0x21: {
-				CPU.last_op = "AND ind,X";
-				cycles      = 6;
-				AND( read_ind_x() );
-			} break;
-			
-			// BIT zpg
-			case 0x24: {
-				CPU.last_op = "BIT zpg";
-				cycles      = 3;
-				auto tmp    = CPU.A & read_zpg();
-				CPU.set_flag( N, tmp>>7 );
-				CPU.set_flag( V, (tmp>>6)&1 );
-			} break;
-			
-			// AND zpg
-			case 0x25: {
-				CPU.last_op = "AND zpg";
-				cycles      = 3;
-				AND( read_zpg() );
-			} break;
-			
-			// ROL zpg
-			case 0x26: {
-				CPU.last_op = "ROL zpg";
-				cycles      = 5;
-				ROL( read_zpg() );
-			} break;
-			
-			// PLP impl
-			case 0x28: {
-				CPU.last_op = "PLP impl";
-				// TODO: verify break restoration veracity
-				cycles      = 4;
-				CPU.P       = pull();
-			} break;
-			
-			// AND imm
-			case 0x29: {
-				CPU.last_op = "AND imm";
-				cycles      = 2;
-				AND( read_imm() );
-			} break;
-			
-			// ROL acc
-			case 0x2A: {
-				CPU.last_op = "ROL acc";
-				cycles      = 2;
-				ROL( CPU.A );
-			} break;
-			
-			// BIT abs
-			case 0x2C: {
-				CPU.last_op = "BIT abs";
+			switch (instruction)
+			{
+				// BRK impl
+				case 0x00: {
+					CPU.last_op = "BRK impl";
+					cycles      = 7;
+					CPU.PC      = (RAM[0xFFFF] << 8) + RAM[0xFFFE]; // TODO: verify
+					CPU.set_flag( I, 1 );
+					push( CPU.PC );
+					push( CPU.P  );
+					while(1); // TODO: remove
+				} break; 
 				
-			} break;
-			
-			// AND abs
-			case 0x2D: {
-				CPU.last_op = "AND abs";
-				cycles      = 4;
-				AND( read_abs() );
-			} break;
-			
-			// ROL abs
-			case 0x2E: {
-				CPU.last_op = "ROL abs";
-				cycles      = 6;
-				ROL( read_abs() );
-			} break;
-			
-			// BMI rel
-			case 0x30: {
-				CPU.last_op = "BMI rel";
-				cycles      = 2;
-				if ( CPU.read_flag(N) )
-					cycles += rel_jmp()? 2 : 1; 
-			} break;
-			
-			// AND ind,Y
-			case 0x31: {
-				CPU.last_op = "AND ind,Y";
-				cycles      = 5;
-				AND( read_ind_y(cycles) );
-			} break;
-			
-			// AND zpg,X
-			case 0x35: {
-				CPU.last_op = "AND zpg,X";
-				cycles      = 4;
-				AND( read_zpg_x() );
-			} break;
-			
-			// ROL zpg,X
-			case 0x36: {
-				CPU.last_op = "ROL zpg,X";
-				cycles      = 6;
-				ROL( read_zpg_x() );
-			} break;
-			
-			// SEC impl
-			case 0x38: {
-				CPU.last_op = "SEC impl";
-				cycles      = 2;
-				CPU.set_flag( C );
-			} break;
-			
-			// AND abs,Y
-			case 0x39: {
-				CPU.last_op = "AND abs,Y";
-				cycles      = 4;
-				AND( read_abs_y(cycles) );
-			} break;
-			
-			// AND abs,X
-			case 0x3D: {
-				CPU.last_op = "AND abs,X";
-				cycles      = 4;
-				AND( read_abs_x(cycles) );
-			} break;
-			
-			// ROL abs,X
-			case 0x3E: {
-				CPU.last_op = "ROL abs,X";
-				cycles      = 7;
-				u8 dummy;
-				ROL( read_abs_x(dummy) ); // TODO: clean up
-			} break;
-			
-			// RTI impl
-			case 0x40: { // TODO: verify endianness
-				CPU.last_op = "RTI impl";
-				cycles      = 6;
-				CPU.P       = pull();
-				CPU.PC      = pull(); // MSB
-				CPU.PC    <<= 8;
-				CPU.PC     += pull(); // LSB
-			} break;
-			
-			// EOR ind,X
-			case 0x41: {
-				CPU.last_op = "EOR ind,X";
-				cycles      = 6;
-				EOR( read_ind_x() );
-			} break;
-			
-			// EOR zpg
-			case 0x45: {
-				CPU.last_op = "EOR zpg";
-				cycles      = 3;
-				EOR( read_zpg() );
-			} break;
-			
-			// LSR zpg
-			case 0x46: {
-				CPU.last_op = "LSR zpg";
-				cycles      = 5;
-				LSR( read_zpg() );
-			} break;
-			
-			// PHA impl
-			case 0x48: {
-				CPU.last_op = "PHA impl";
-				cycles      = 3;
-				push( CPU.A );
-			} break;
-			
-			// EOR imm
-			case 0x49: {
-				CPU.last_op = "EOR imm";
-				cycles      = 2;
-				EOR( read_imm() );
-			} break;
-			
-			// LSR acc
-			case 0x4A: {
-				CPU.last_op = "LSR acc";
-				cycles      = 2;
-				LSR( CPU.A );
-			} break;
-			
-			// JMP abs
-			case 0x4C: {
-				CPU.last_op = "JMP abs";
-				cycles      = 3;
-				CPU.PC      = read_addr();
-			} break;
-			
-			// EOR abs
-			case 0x4D: {
-				CPU.last_op = "EOR abs";
-				cycles      = 4;
-				EOR( read_abs() );
-			} break;
-			
-			// LSR abs
-			case 0x4E: {
-				CPU.last_op = "LSR abs";
-				cycles      = 6;
-				LSR( read_abs() );
-			} break;
-			
-			// BVC rel
-			case 0x50: {
-				CPU.last_op = "BVC rel";
-				cycles      = 2;
-				if ( !CPU.read_flag(V) )
-					cycles += rel_jmp()? 2 : 1; 
-			} break;
-			
-			// EOR ind,Y
-			case 0x51: {
-				CPU.last_op = "EOR ind,Y";
-				cycles      = 5;
-				EOR( read_ind_y(cycles) );
-			} break;
-			
-			// EOR zpg,X
-			case 0x55: {
-				CPU.last_op = "EOR zpg,X";
-				cycles      = 4;
-				EOR( read_zpg_x() );
-			} break;
-			
-			// LSR zpg,X
-			case 0x56: {
-				CPU.last_op = "LSR zpg,X";
-				cycles      = 6;
-				LSR( read_zpg_x() );
-			} break;
-			
-			// CLI impl
-			case 0x58: {
-				CPU.last_op = "CLI impl";
-				cycles      = 2;
-				CPU.clear_flag( I );
-			} break;
-			
-			// EOR abs,Y
-			case 0x59: {
-				CPU.last_op = "EOR abs,Y";
-				cycles      = 4;
-				EOR( read_abs_y(cycles) );
-			} break;
-			
-			// EOR abs,X
-			case 0x5D: {
-				CPU.last_op = "EOR abs,X";
-				cycles      = 4;
-				EOR( read_abs_x(cycles) );
-			} break;
-			
-			// LSR abs,X
-			case 0x5E: {
-				CPU.last_op = "LSR abs,X";
-				cycles      = 7;
-				u8 dummy;
-				LSR( read_abs_x(dummy) ); // clean up
-			} break;
-			
-			// RTS impl
-			case 0x60: {
-				CPU.last_op = "RTS impl";
-				cycles      = 6;
-				CPU.PC      = pull_addr(); // TODO: verify
-			} break;
-			
-			// ADC ind,X
-			case 0x61: {
-				CPU.last_op = "ADC ind,X";
-				cycles      = 6;
-				ADC( read_ind_x() );
-			} break;
-			
-			// ADC zpg
-			case 0x65: {
-				CPU.last_op = "ADC zpg";
-				cycles      = 3;
-				ADC( read_zpg() );
-			} break;
-			
-			// ROR zpg
-			case 0x66: {
-				CPU.last_op = "ROR zpg";
-				cycles      = 5;
-				ROR( read_zpg() );
-			} break;
-			
-			// PLA impl
-			case 0x68: {
-				CPU.last_op = "PLA impl";
-				cycles      = 4;
-				CPU.A       = pull();
-				CPU.update_ZN();
-			} break;
-			
-			// ADC imm
-			case 0x69: {
-				CPU.last_op = "ADC imm";
-				cycles      = 2;
-				ADC( read_imm() );
-			} break;
-			
-			// ROR acc
-			case 0x6A: {
-				CPU.last_op = "ROR acc";
-				cycles      = 2;
-				ROR( CPU.A );
-			} break;
-			
-			// JMP ind
-			case 0x6C: { // TODO: verify implementation
-				CPU.last_op = "JMP ind";
-				cycles      = 5;
-				CPU.PC      = read_abs();
-				CPU.PC      = read_abs();
-				// TODO: reproduce 6502 bug
-			} break;
-			
-			// ADC abs
-			case 0x6D: {
-				CPU.last_op = "ADC abs";
-				cycles      = 4;
-				ADC( read_abs() );
-			} break;
-			
-			// ROR abs
-			case 0x6E: {
-				CPU.last_op = "ROR abs";
-				cycles      = 6;
-				ROR( read_abs() );
-			} break;
-			
-			// BVS rel
-			case 0x70: {
-				CPU.last_op = "BVS rel";
-				cycles      = 2;
-				if ( CPU.read_flag(V) )
-					cycles += rel_jmp()? 2 : 1; 
-			} break;
-			
-			// ADC ind,Y
-			case 0x71: {
-				CPU.last_op = "ADC ind,Y";
-				cycles      = 5;
-				ADC( read_ind_y(cycles) );
-			} break;
-			
-			// ADC zpg,X
-			case 0x75: {
-				CPU.last_op = "ADC zpg,X";
-				cycles      = 4;
-				ADC( read_zpg_x() );
-			} break;
-			
-			// ROR zpg,X
-			case 0x76: {
-				CPU.last_op = "ROR zpg,X";
-				cycles      = 6;
-				ROR( read_zpg_x() );
-			} break;
-			
-			// SEI impl
-			case 0x78: {
-				CPU.last_op = "SEI impl";
-				cycles      = 2;
-				CPU.set_flag( I );
-			} break;
-			
-			// ADC abs,Y
-			case 0x79: {
-				CPU.last_op = "ADC abs,Y";
-				cycles      = 4;
-				ADC( read_abs_y(cycles) );
-			} break;
-			
-			// ADC abs,X
-			case 0x7D: {
-				CPU.last_op = "ADC abs,X";
-				cycles      = 4;
-				ADC( read_abs_x(cycles) );
-			} break;
-			
-			// ROR abs,X
-			case 0x7E: {
-				CPU.last_op = "ROR abs,X";
-				cycles      = 7;
-				u8 dummy;
-				ROR( read_abs_x(dummy) ); // TODO: clean up
-			} break;
-			
-			// STA ind,X
-			case 0x81: {
-				CPU.last_op  = "STA ind,X";
-				cycles       = 6;
-				read_ind_x() = CPU.A;
-			} break;
-			
-			// STY zpg
-			case 0x84: {
-				CPU.last_op = "STY zpg";
-				cycles      = 3;
-				read_zpg()  = CPU.Y;
-			} break;
-			
-			// STA zpg
-			case 0x85: {
-				CPU.last_op = "STA zpg";
-				cycles      = 3;
-				read_zpg()  = CPU.A;
-			} break;
-			
-			// STX zpg
-			case 0x86: {
-				CPU.last_op = "STX zpg";
-				cycles      = 3;
-				read_zpg()  = CPU.X;
-			} break;
-			
-			// DEY impl
-			case 0x88: {
-				CPU.last_op = "DEY impl";
-				cycles      = 2;
-				DEC( CPU.Y );
-			} break;
-			
-			// TXA impl
-			case 0x8A: {
-				CPU.last_op = "TXA impl";
-				cycles      = 2;
-				CPU.A       = CPU.X;
-				CPU.update_ZN();
-			} break;
-			
-			// STY abs
-			case 0x8C: {
-				CPU.last_op = "STY abs";
-				cycles      = 4;
-				read_abs()  = CPU.Y;
-			} break;
-			
-			// STA abs
-			case 0x8D: {
-				CPU.last_op = "STA abs";
-				cycles      = 4;
-				read_abs()  = CPU.A;
-			} break;
-			
-			// STX abs
-			case 0x8E: {
-				CPU.last_op = "STX abs";
-				cycles      = 4;
-				read_abs()  = CPU.X;
-			} break;
-			
-			// BCC rel
-			case 0x90: {
-				CPU.last_op = "BCC rel";
-				cycles = 2;
-				if ( !CPU.read_flag(C) )
-					cycles += rel_jmp()? 2 : 1; 
-			} break;
-			
-			// STA ind,Y
-			case 0x91: {
-				CPU.last_op = "STA ind,Y";
-				cycles      = 6;
-				u8 dummy;
-				read_ind_y(dummy) = CPU.A; // TODO: clean up
-			} break;
-			
-			// STY zpg,X
-			case 0x94: {
-				CPU.last_op  = "STY zpg,X";
-				cycles       = 4;
-				read_zpg_x() = CPU.Y;
-			} break;
-			
-			// STA zpg,X
-			case 0x95: {
-				CPU.last_op  = "STA zpg,X";
-				cycles       = 4;
-				read_zpg_x() = CPU.A;
-			} break;
-			
-			// STX zpg,Y
-			case 0x96: {
-				CPU.last_op  = "STX zpg,Y";
-				cycles       = 4;
-				read_zpg_y() = CPU.X;
-			} break;
-			
-			// TYA impl
-			case 0x98: {
-				CPU.last_op = "TYA impl";
-				cycles      = 2;
-				CPU.A       = CPU.Y;
-				CPU.update_ZN();
-			} break;
-			
-			// STA abs,Y
-			case 0x99: {
-				CPU.last_op = "STA abs,Y";
-				u8 dummy;
-				read_abs_y(dummy) = CPU.A; // TODO: clean up
-				cycles = 5;
-			} break;
-			
-			// TXS impl
-			case 0x9A: {
-				CPU.last_op = "TXS impl";
-				cycles      = 2;
-				CPU.SP      = CPU.X;
-				CPU.update_ZN();
-			} break;
-			
-			// STA abs,X
-			case 0x9D: {
-				CPU.last_op = "STA abs,X";
-				cycles      = 5;
-				u8 dummy;
-				read_abs_x(dummy) = CPU.A; // TODO: clean up
-			} break;
-			
-			// LDY imm
-			case 0xA0: {
-				CPU.last_op = "LDY imm";
-				cycles      = 2;
-				CPU.Y       = read_imm();
-			} break;
-			
-			// LDA ind,X
-			case 0xA1: {
-				CPU.last_op = "LDA ind,X";
-				cycles      = 6;
-				CPU.A       = read_ind_x();
-			} break;
-			
-			// LDX imm
-			case 0xA2: {
-				CPU.last_op = "LDX imm";
-				cycles      = 2;
-				CPU.X       = read_imm();
-			} break;
-			
-			// LDY zpg
-			case 0xA4: {
-				CPU.last_op = "LDY zpg";
-				cycles      = 3;
-				CPU.Y       = read_zpg();
-			} break;
-			
-			// LDA zpg
-			case 0xA5: {
-				CPU.last_op = "LDA zpg";
-				cycles      = 3;
-				CPU.A       = read_zpg();
-			} break;
-			
-			// LDX zpg
-			case 0xA6: {
-				CPU.last_op = "LDX zpg";
-				cycles      = 3;
-				CPU.X       = read_zpg();
-			} break;
-			
-			// TAY impl
-			case 0xA8: {
-				CPU.last_op = "TAY impl";
-				cycles      = 2;
-				CPU.A       = CPU.Y;
-				CPU.update_ZN();
-			} break;
-			
-			// LDA imm
-			case 0xA9: {
-				CPU.last_op = "LDA imm";
-				cycles      = 2;
-				CPU.A       = read_imm();
-			} break;
-			
-			// TAX impl
-			case 0xAA: {
-				CPU.last_op = "TAX impl";
-				cycles      = 2;
-				CPU.A       = CPU.X;
-				CPU.update_ZN();
-			} break;
-			
-			// LDY abs
-			case 0xAC: {
-				CPU.last_op = "LDY abs";
-				cycles      = 4;
-				CPU.Y       = read_abs();
-			} break;
-			
-			// LDA abs
-			case 0xAD: {
-				CPU.last_op = "LDA abs";
-				cycles      = 4;
-				CPU.A       = read_abs();
-			} break;
-			
-			// LDX abs
-			case 0xAE: {
-				CPU.last_op = "LDX abs";
-				cycles      = 4;
-				CPU.X       = read_abs();
-			} break;
-			
-			// BCS rel
-			case 0xB0: {
-				CPU.last_op = "BCS rel";
-				cycles      = 2;
-				if ( CPU.read_flag(C) )
-					cycles += rel_jmp()? 2 : 1; 
-			} break;
-			
-			// LDA ind,Y
-			case 0xB1: {
-				CPU.last_op = "LDA ind,Y";
-				cycles      = 5;
-				CPU.A       = read_ind_y(cycles);
-			} break;
-			
-			// LDY zpg,X
-			case 0xB4: {
-				CPU.last_op = "LDY zpg,X";
-				cycles      = 4;
-				CPU.Y       = read_zpg_x();
-			} break;
-			
-			// LDA zpg,X
-			case 0xB5: {
-				CPU.last_op = "LDA zpg,X";
-				cycles      = 4;
-				CPU.A       = read_zpg_x();
-			} break;
-			
-			// LDX zpg,Y
-			case 0xB6: {
-				CPU.last_op = "LDX zpg,Y";
-				cycles      = 4;
-				CPU.X       = read_zpg_y();
-			} break;
-			
-			// CLV impl
-			case 0xB8: {
-				CPU.last_op = "CLV impl";
-				cycles      = 2;
-				CPU.clear_flag( V );
-			} break;
-			
-			// LDA abs,Y
-			case 0xB9: {
-				CPU.last_op = "LDA abs,Y";
-				cycles      = 4;
-				CPU.A       = read_abs_y(cycles);
-			} break;
-			
-			// TSX impl
-			case 0xBA: {
-				CPU.last_op = "TSX impl";
-				cycles      = 2;
-				CPU.SP      = CPU.X;
-				CPU.update_ZN();
-			} break;
-			
-			// LDY abs,X
-			case 0xBC: {
-				CPU.last_op = "LDY abs,X";
-				cycles      = 4;
-				CPU.Y       = read_abs_x(cycles);
-			} break;
-			
-			// LDA abs,X
-			case 0xBD: {
-				CPU.last_op = "LDA abs,X";
-				cycles      = 4;
-				CPU.A       = read_abs_x(cycles);
-			} break;
-			
-			// LDX abs,Y
-			case 0xBE: {
-				CPU.last_op = "LDX abs,Y";
-				cycles      = 4;
-				CPU.X       = read_abs_y(cycles);
-			} break;
-			
-			// CPY imm
-			case 0xC0: {
-				CPU.last_op = "CPY imm";
-				cycles      = 2;
-				compare( CPU.Y, read_imm() );
-			} break;
-			
-			// CMP ind,X
-			case 0xC1: {
-				CPU.last_op = "CMP ind,X";
-				cycles      = 6;
-				compare( CPU.A, read_ind_x() );
-			} break;
-			
-			// CPY zpg
-			case 0xC4: {
-				CPU.last_op = "CPY zpg";
-				cycles      = 3;
-				compare( CPU.Y, read_zpg() );
-			} break;
-			
-			// CMP zpg
-			case 0xC5: {
-				CPU.last_op = "CMP zpg";
-				cycles      = 3;
-				compare( CPU.A, read_zpg() );
-			} break;
-			
-			// DEC zpg
-			case 0xC6: {
-				CPU.last_op = "DEC zpg";
-				cycles      = 5;
-				DEC( read_zpg() );
-			} break;
-			
-			// INY impl
-			case 0xC8: {
-				CPU.last_op = "INY impl";
-				cycles      = 2;
-				INC( CPU.Y );
-			} break;
-			
-			// CMP imm
-			case 0xC9: {
-				CPU.last_op = "CMP imm";
-				cycles      = 2;
-				compare( CPU.A, read_imm() );
-			} break;
-			
-			// DEX impl
-			case 0xCA: {
-				CPU.last_op = "DEX impl";
-				cycles      = 2;
-				DEC( CPU.X );
-			} break;
-			
-			// CPY abs
-			case 0xCC: {
-				CPU.last_op = "CPY abs";
-				cycles      = 4;
-				compare( CPU.Y, read_abs() );
-			} break;
-			
-			// CMP abs
-			case 0xCD: {
-				CPU.last_op = "CMP abs";
-				cycles      = 4;
-				compare( CPU.A, read_abs() );
-			} break;
-			
-			// DEC abs
-			case 0xCE: {
-				CPU.last_op = "DEC abs";
-				cycles      = 6;
-				DEC( read_abs() );
-			} break;
-			
-			// BNE rel
-			case 0xD0: {
-				CPU.last_op = "BNE rel";
-				cycles      = 2;
-				if ( !CPU.read_flag(Z) )
-					cycles += rel_jmp()? 2 : 1; 
-			} break;
-			
-			// CMP ind,Y
-			case 0xD1: {
-				CPU.last_op = "CMP ind,Y";
-				cycles      = 5;
-				compare( CPU.A, read_ind_y(cycles) );
-			} break;
-			
-			// CMP zpg,X
-			case 0xD5: {
-				CPU.last_op = "CMP zpg,X";
-				cycles      = 4;
-				compare( CPU.A, read_zpg_x() );
-			} break;
-			
-			// DEC zpg,X
-			case 0xD6: {
-				CPU.last_op = "DEC zpg,X";
-				cycles      = 6;
-				DEC( read_zpg_x() );
-			} break;
-			
-			// CLD impl
-			case 0xD8: {
-				CPU.last_op = "CLD impl";
-				cycles      = 2;
-				CPU.clear_flag( D );
-			} break;
-			
-			// CMP abs,Y
-			case 0xD9: {
-				CPU.last_op = "CMP abs,Y";
-				cycles      = 4;
-				compare( CPU.A, read_abs_y(cycles) );
-			} break;
-			
-			// CMP abs,X
-			case 0xDD: {
-				CPU.last_op = "CMP abs,X";
-				cycles      = 4;
-				compare( CPU.A, read_abs_x(cycles) );
-			} break;
-			
-			// DEC abs,X
-			case 0xDE: {
-				CPU.last_op = "DEC abs,X";
-				cycles      = 7;
-				u8 dummy;
-				DEC( read_abs_x(dummy) ); // TODO: clean up
-			} break;
-			
-			// CPX imm
-			case 0xE0: {
-				CPU.last_op = "CPX imm";
-				cycles      = 2;
-				compare( CPU.X, read_imm() );
-			} break;
-			
-			// SBC ind,X
-			case 0xE1: {
-				CPU.last_op = "SBC ind,X";
-				cycles      = 6;
-				SBC( read_ind_x() );
-			} break;
-			
-			// CPX zpg
-			case 0xE4: {
-				CPU.last_op = "CPX zpg";
-				cycles      = 3;
-				compare( CPU.X, read_zpg() );
-			} break;
-			
-			// SBC zpg
-			case 0xE5: {
-				CPU.last_op = "SBC zpg";
-				cycles      = 3;
-				SBC( read_zpg() );
-			} break;
-			
-			// INC zpg
-			case 0xE6: {
-				CPU.last_op = "INC zpg";
-				cycles      = 5;
-				INC( read_zpg() );
-			} break;
-			
-			// INX impl
-			case 0xE8: {
-				CPU.last_op = "INX impl";
-				cycles      = 2;
-				INC( CPU.X );
-			} break;
-			
-			// SBC imm
-			case 0xE9: {
-				CPU.last_op = "SBC imm";
-				cycles      = 2;
-				SBC( read_imm() );
-			} break;
-			
-			// NOP impl
-			case 0xEA: {
-				CPU.last_op = "NOP impl";
-				cycles      = 2;
-			} break;
-			
-			// CPX abs
-			case 0xEC: {
-				CPU.last_op = "CPX abs";
-				cycles      = 4;
-				compare( CPU.X, read_abs() );
-			} break;
-			
-			// SBC abs
-			case 0xED: {
-				CPU.last_op = "SBC abs";
-				cycles      = 4;
-				SBC( read_abs() );
-			} break;
-			
-			// INC abs
-			case 0xEE: {
-				CPU.last_op = "INC abs";
-				cycles      = 6;
-				INC( read_abs() );
-			} break;
-			
-			//  BEQ rel
-			case 0xF0: {
-				CPU.last_op = " BEQ rel";
-				cycles      = 2;
-				if ( CPU.read_flag(Z) )
-					cycles += rel_jmp()? 2 : 1; 
-			} break;
-			
-			// SBC ind,Y
-			case 0xF1: {
-				CPU.last_op = "SBC ind,Y";
-				cycles      = 5;
-				SBC( read_ind_y(cycles) );
-			} break;
-			
-			// SBC zpg,X
-			case 0xF5: {
-				CPU.last_op = "SBC zpg,X";
-				cycles      = 4;
-				SBC( read_zpg_x() );
-			} break;
-			
-			// INC zpg,X
-			case 0xF6: {
-				CPU.last_op = "INC zpg,X";
-				cycles      = 6;
-				INC( read_zpg_x() );
-			} break;
-			
-			// SED impl
-			case 0xF8: {
-				CPU.last_op = "SED impl";
-				cycles      = 2;
-				CPU.set_flag( D );
-			} break;
-			
-			// SBC abs,Y
-			case 0xF9: {
-				CPU.last_op = "SBC abs,Y";
-				cycles      = 4;
-				SBC( read_abs_y(cycles) );
-			} break;
-			
-			// SBC abs,X
-			case 0xFD: {
-				CPU.last_op = "SBC abs,X";
-				cycles      = 4;
-				SBC( read_abs_x(cycles) );
-			} break;
-			
-			// INC abs,X
-			case 0xFE: {
-				CPU.last_op = "INC abs,X";
-				cycles      = 6;
-				u8 dummy;
-				INC( read_abs_x(dummy) ); // TODO: clean up
-			} break;
+				// ORA X,ind
+				case 0x01: {
+					CPU.last_op = "ORA X,ind";
+					cycles      = 6;
+					ORA( read_ind_x() );
+				} break;
+				
+				// ORA zpg
+				case 0x05: {
+					CPU.last_op = "ORA zpg";
+					cycles      = 3;
+					ORA( read_zpg() );
+				} break;
+				
+				// ASL zpg
+				case 0x06: {
+					CPU.last_op = "ASL zpg";
+					cycles      = 5;
+					ASL( read_zpg() );
+				} break;
+				
+				// PHP impl
+				case 0x08: {
+					CPU.last_op = "PHP impl";
+					cycles      = 3;
+					push( CPU.P );
+				} break;
+				
+				// ORA imm
+				case 0x09: {
+					CPU.last_op = "ORA imm";
+					cycles      = 2;
+					ORA( read_imm() );
+				} break;
+				
+				// ASL acc
+				case 0x0A: {
+					CPU.last_op = "ASL acc";
+					cycles      = 2;
+					ASL( CPU.A );
+				} break;
+				
+				// ORA abs
+				case 0x0D: {
+					CPU.last_op = "ORA abs";
+					cycles      = 4;
+					ORA( read_abs() );
+				} break;
+				
+				// ASL abs
+				case 0x0E: {
+					CPU.last_op = "ASL abs";
+					cycles      = 6;
+					ASL( read_abs() );
+				} break;
+				
+				// BPL rel
+				case 0x10: {
+					CPU.last_op = "BPL rel";
+					cycles      = 2;
+					if ( !CPU.read_flag(N) )
+						cycles += rel_jmp()? 2 : 1; 
+				} break;
+				
+				// ORA ind,Y
+				case 0x11: {
+					CPU.last_op = "ORA ind,Y";
+					cycles      = 5;
+					ORA( read_ind_y(cycles) );
+				} break;
+				
+				// ORA zpg,X
+				case 0x15: {
+					CPU.last_op = "ORA zpg,X";
+					cycles      = 4;
+					ORA( read_zpg_x() );
+				} break;
+				
+				// ASL zpg,X
+				case 0x16: {
+					CPU.last_op = "ASL zpg,X";
+					cycles      = 6;
+					ASL( read_zpg_x() );
+				} break;
+				
+				// CLC impl
+				case 0x18: {
+					CPU.last_op = "CLC impl";
+					cycles      = 2;
+					CPU.clear_flag( C );
+				} break;
+				
+				// ORA abs,Y
+				case 0x19: {
+					CPU.last_op = "ORA abs,Y";
+					cycles      = 4;
+					ORA( read_abs_y(cycles) );
+				} break;
+				
+				// ORA abs,X
+				case 0x1D: {
+					CPU.last_op = "ORA abs,X";
+					cycles      = 4;
+					ORA( read_abs_x(cycles) );
+				} break;
+				
+				// ASL abs,X
+				case 0x1E: {
+					CPU.last_op = "ASL abs,X";
+					cycles      = 7;
+					u8 dummy;
+					ASL( read_abs_x(dummy) ); // TODO: clean up
+				} break;
+				
+				// JSR abs
+				case 0x20: {
+					CPU.last_op = "JSR abs";
+					cycles      = 6;
+					push_addr( CPU.PC+2 );
+					CPU.PC      = read_addr();
+				} break;
+				
+				// AND ind,X
+				case 0x21: {
+					CPU.last_op = "AND ind,X";
+					cycles      = 6;
+					AND( read_ind_x() );
+				} break;
+				
+				// BIT zpg
+				case 0x24: {
+					CPU.last_op = "BIT zpg";
+					cycles      = 3;
+					auto tmp    = CPU.A & read_zpg();
+					CPU.set_flag( N, tmp>>7 );
+					CPU.set_flag( V, (tmp>>6)&1 );
+				} break;
+				
+				// AND zpg
+				case 0x25: {
+					CPU.last_op = "AND zpg";
+					cycles      = 3;
+					AND( read_zpg() );
+				} break;
+				
+				// ROL zpg
+				case 0x26: {
+					CPU.last_op = "ROL zpg";
+					cycles      = 5;
+					ROL( read_zpg() );
+				} break;
+				
+				// PLP impl
+				case 0x28: {
+					CPU.last_op = "PLP impl";
+					// TODO: verify break restoration veracity
+					cycles      = 4;
+					CPU.P       = pull();
+				} break;
+				
+				// AND imm
+				case 0x29: {
+					CPU.last_op = "AND imm";
+					cycles      = 2;
+					AND( read_imm() );
+				} break;
+				
+				// ROL acc
+				case 0x2A: {
+					CPU.last_op = "ROL acc";
+					cycles      = 2;
+					ROL( CPU.A );
+				} break;
+				
+				// BIT abs
+				case 0x2C: {
+					CPU.last_op = "BIT abs";
+					
+				} break;
+				
+				// AND abs
+				case 0x2D: {
+					CPU.last_op = "AND abs";
+					cycles      = 4;
+					AND( read_abs() );
+				} break;
+				
+				// ROL abs
+				case 0x2E: {
+					CPU.last_op = "ROL abs";
+					cycles      = 6;
+					ROL( read_abs() );
+				} break;
+				
+				// BMI rel
+				case 0x30: {
+					CPU.last_op = "BMI rel";
+					cycles      = 2;
+					if ( CPU.read_flag(N) )
+						cycles += rel_jmp()? 2 : 1; 
+				} break;
+				
+				// AND ind,Y
+				case 0x31: {
+					CPU.last_op = "AND ind,Y";
+					cycles      = 5;
+					AND( read_ind_y(cycles) );
+				} break;
+				
+				// AND zpg,X
+				case 0x35: {
+					CPU.last_op = "AND zpg,X";
+					cycles      = 4;
+					AND( read_zpg_x() );
+				} break;
+				
+				// ROL zpg,X
+				case 0x36: {
+					CPU.last_op = "ROL zpg,X";
+					cycles      = 6;
+					ROL( read_zpg_x() );
+				} break;
+				
+				// SEC impl
+				case 0x38: {
+					CPU.last_op = "SEC impl";
+					cycles      = 2;
+					CPU.set_flag( C );
+				} break;
+				
+				// AND abs,Y
+				case 0x39: {
+					CPU.last_op = "AND abs,Y";
+					cycles      = 4;
+					AND( read_abs_y(cycles) );
+				} break;
+				
+				// AND abs,X
+				case 0x3D: {
+					CPU.last_op = "AND abs,X";
+					cycles      = 4;
+					AND( read_abs_x(cycles) );
+				} break;
+				
+				// ROL abs,X
+				case 0x3E: {
+					CPU.last_op = "ROL abs,X";
+					cycles      = 7;
+					u8 dummy;
+					ROL( read_abs_x(dummy) ); // TODO: clean up
+				} break;
+				
+				// RTI impl
+				case 0x40: { // TODO: verify endianness
+					CPU.last_op = "RTI impl";
+					cycles      = 6;
+					CPU.P       = pull();
+					CPU.PC      = pull(); // MSB
+					CPU.PC    <<= 8;
+					CPU.PC     += pull(); // LSB
+				} break;
+				
+				// EOR ind,X
+				case 0x41: {
+					CPU.last_op = "EOR ind,X";
+					cycles      = 6;
+					EOR( read_ind_x() );
+				} break;
+				
+				// EOR zpg
+				case 0x45: {
+					CPU.last_op = "EOR zpg";
+					cycles      = 3;
+					EOR( read_zpg() );
+				} break;
+				
+				// LSR zpg
+				case 0x46: {
+					CPU.last_op = "LSR zpg";
+					cycles      = 5;
+					LSR( read_zpg() );
+				} break;
+				
+				// PHA impl
+				case 0x48: {
+					CPU.last_op = "PHA impl";
+					cycles      = 3;
+					push( CPU.A );
+				} break;
+				
+				// EOR imm
+				case 0x49: {
+					CPU.last_op = "EOR imm";
+					cycles      = 2;
+					EOR( read_imm() );
+				} break;
+				
+				// LSR acc
+				case 0x4A: {
+					CPU.last_op = "LSR acc";
+					cycles      = 2;
+					LSR( CPU.A );
+				} break;
+				
+				// JMP abs
+				case 0x4C: {
+					CPU.last_op = "JMP abs";
+					cycles      = 3;
+					CPU.PC      = read_addr();
+				} break;
+				
+				// EOR abs
+				case 0x4D: {
+					CPU.last_op = "EOR abs";
+					cycles      = 4;
+					EOR( read_abs() );
+				} break;
+				
+				// LSR abs
+				case 0x4E: {
+					CPU.last_op = "LSR abs";
+					cycles      = 6;
+					LSR( read_abs() );
+				} break;
+				
+				// BVC rel
+				case 0x50: {
+					CPU.last_op = "BVC rel";
+					cycles      = 2;
+					if ( !CPU.read_flag(V) )
+						cycles += rel_jmp()? 2 : 1; 
+				} break;
+				
+				// EOR ind,Y
+				case 0x51: {
+					CPU.last_op = "EOR ind,Y";
+					cycles      = 5;
+					EOR( read_ind_y(cycles) );
+				} break;
+				
+				// EOR zpg,X
+				case 0x55: {
+					CPU.last_op = "EOR zpg,X";
+					cycles      = 4;
+					EOR( read_zpg_x() );
+				} break;
+				
+				// LSR zpg,X
+				case 0x56: {
+					CPU.last_op = "LSR zpg,X";
+					cycles      = 6;
+					LSR( read_zpg_x() );
+				} break;
+				
+				// CLI impl
+				case 0x58: {
+					CPU.last_op = "CLI impl";
+					cycles      = 2;
+					CPU.clear_flag( I );
+				} break;
+				
+				// EOR abs,Y
+				case 0x59: {
+					CPU.last_op = "EOR abs,Y";
+					cycles      = 4;
+					EOR( read_abs_y(cycles) );
+				} break;
+				
+				// EOR abs,X
+				case 0x5D: {
+					CPU.last_op = "EOR abs,X";
+					cycles      = 4;
+					EOR( read_abs_x(cycles) );
+				} break;
+				
+				// LSR abs,X
+				case 0x5E: {
+					CPU.last_op = "LSR abs,X";
+					cycles      = 7;
+					u8 dummy;
+					LSR( read_abs_x(dummy) ); // clean up
+				} break;
+				
+				// RTS impl
+				case 0x60: {
+					CPU.last_op = "RTS impl";
+					cycles      = 6;
+					CPU.PC      = pull_addr(); // TODO: verify
+				} break;
+				
+				// ADC ind,X
+				case 0x61: {
+					CPU.last_op = "ADC ind,X";
+					cycles      = 6;
+					ADC( read_ind_x() );
+				} break;
+				
+				// ADC zpg
+				case 0x65: {
+					CPU.last_op = "ADC zpg";
+					cycles      = 3;
+					ADC( read_zpg() );
+				} break;
+				
+				// ROR zpg
+				case 0x66: {
+					CPU.last_op = "ROR zpg";
+					cycles      = 5;
+					ROR( read_zpg() );
+				} break;
+				
+				// PLA impl
+				case 0x68: {
+					CPU.last_op = "PLA impl";
+					cycles      = 4;
+					CPU.A       = pull();
+					CPU.update_ZN();
+				} break;
+				
+				// ADC imm
+				case 0x69: {
+					CPU.last_op = "ADC imm";
+					cycles      = 2;
+					ADC( read_imm() );
+				} break;
+				
+				// ROR acc
+				case 0x6A: {
+					CPU.last_op = "ROR acc";
+					cycles      = 2;
+					ROR( CPU.A );
+				} break;
+				
+				// JMP ind
+				case 0x6C: { // TODO: verify implementation
+					CPU.last_op = "JMP ind";
+					cycles      = 5;
+					CPU.PC      = read_abs();
+					CPU.PC      = read_abs();
+					// TODO: reproduce 6502 bug
+				} break;
+				
+				// ADC abs
+				case 0x6D: {
+					CPU.last_op = "ADC abs";
+					cycles      = 4;
+					ADC( read_abs() );
+				} break;
+				
+				// ROR abs
+				case 0x6E: {
+					CPU.last_op = "ROR abs";
+					cycles      = 6;
+					ROR( read_abs() );
+				} break;
+				
+				// BVS rel
+				case 0x70: {
+					CPU.last_op = "BVS rel";
+					cycles      = 2;
+					if ( CPU.read_flag(V) )
+						cycles += rel_jmp()? 2 : 1; 
+				} break;
+				
+				// ADC ind,Y
+				case 0x71: {
+					CPU.last_op = "ADC ind,Y";
+					cycles      = 5;
+					ADC( read_ind_y(cycles) );
+				} break;
+				
+				// ADC zpg,X
+				case 0x75: {
+					CPU.last_op = "ADC zpg,X";
+					cycles      = 4;
+					ADC( read_zpg_x() );
+				} break;
+				
+				// ROR zpg,X
+				case 0x76: {
+					CPU.last_op = "ROR zpg,X";
+					cycles      = 6;
+					ROR( read_zpg_x() );
+				} break;
+				
+				// SEI impl
+				case 0x78: {
+					CPU.last_op = "SEI impl";
+					cycles      = 2;
+					CPU.set_flag( I );
+				} break;
+				
+				// ADC abs,Y
+				case 0x79: {
+					CPU.last_op = "ADC abs,Y";
+					cycles      = 4;
+					ADC( read_abs_y(cycles) );
+				} break;
+				
+				// ADC abs,X
+				case 0x7D: {
+					CPU.last_op = "ADC abs,X";
+					cycles      = 4;
+					ADC( read_abs_x(cycles) );
+				} break;
+				
+				// ROR abs,X
+				case 0x7E: {
+					CPU.last_op = "ROR abs,X";
+					cycles      = 7;
+					u8 dummy;
+					ROR( read_abs_x(dummy) ); // TODO: clean up
+				} break;
+				
+				// STA ind,X
+				case 0x81: {
+					CPU.last_op  = "STA ind,X";
+					cycles       = 6;
+					read_ind_x() = CPU.A;
+				} break;
+				
+				// STY zpg
+				case 0x84: {
+					CPU.last_op = "STY zpg";
+					cycles      = 3;
+					read_zpg()  = CPU.Y;
+				} break;
+				
+				// STA zpg
+				case 0x85: {
+					CPU.last_op = "STA zpg";
+					cycles      = 3;
+					read_zpg()  = CPU.A;
+				} break;
+				
+				// STX zpg
+				case 0x86: {
+					CPU.last_op = "STX zpg";
+					cycles      = 3;
+					read_zpg()  = CPU.X;
+				} break;
+				
+				// DEY impl
+				case 0x88: {
+					CPU.last_op = "DEY impl";
+					cycles      = 2;
+					DEC( CPU.Y );
+				} break;
+				
+				// TXA impl
+				case 0x8A: {
+					CPU.last_op = "TXA impl";
+					cycles      = 2;
+					CPU.A       = CPU.X;
+					CPU.update_ZN();
+				} break;
+				
+				// STY abs
+				case 0x8C: {
+					CPU.last_op = "STY abs";
+					cycles      = 4;
+					read_abs()  = CPU.Y;
+				} break;
+				
+				// STA abs
+				case 0x8D: {
+					CPU.last_op = "STA abs";
+					cycles      = 4;
+					read_abs()  = CPU.A;
+				} break;
+				
+				// STX abs
+				case 0x8E: {
+					CPU.last_op = "STX abs";
+					cycles      = 4;
+					read_abs()  = CPU.X;
+				} break;
+				
+				// BCC rel
+				case 0x90: {
+					CPU.last_op = "BCC rel";
+					cycles = 2;
+					if ( !CPU.read_flag(C) )
+						cycles += rel_jmp()? 2 : 1; 
+				} break;
+				
+				// STA ind,Y
+				case 0x91: {
+					CPU.last_op = "STA ind,Y";
+					cycles      = 6;
+					u8 dummy;
+					read_ind_y(dummy) = CPU.A; // TODO: clean up
+				} break;
+				
+				// STY zpg,X
+				case 0x94: {
+					CPU.last_op  = "STY zpg,X";
+					cycles       = 4;
+					read_zpg_x() = CPU.Y;
+				} break;
+				
+				// STA zpg,X
+				case 0x95: {
+					CPU.last_op  = "STA zpg,X";
+					cycles       = 4;
+					read_zpg_x() = CPU.A;
+				} break;
+				
+				// STX zpg,Y
+				case 0x96: {
+					CPU.last_op  = "STX zpg,Y";
+					cycles       = 4;
+					read_zpg_y() = CPU.X;
+				} break;
+				
+				// TYA impl
+				case 0x98: {
+					CPU.last_op = "TYA impl";
+					cycles      = 2;
+					CPU.A       = CPU.Y;
+					CPU.update_ZN();
+				} break;
+				
+				// STA abs,Y
+				case 0x99: {
+					CPU.last_op = "STA abs,Y";
+					u8 dummy;
+					read_abs_y(dummy) = CPU.A; // TODO: clean up
+					cycles = 5;
+				} break;
+				
+				// TXS impl
+				case 0x9A: {
+					CPU.last_op = "TXS impl";
+					cycles      = 2;
+					CPU.SP      = CPU.X;
+					CPU.update_ZN();
+				} break;
+				
+				// STA abs,X
+				case 0x9D: {
+					CPU.last_op = "STA abs,X";
+					cycles      = 5;
+					u8 dummy;
+					read_abs_x(dummy) = CPU.A; // TODO: clean up
+				} break;
+				
+				// LDY imm
+				case 0xA0: {
+					CPU.last_op = "LDY imm";
+					cycles      = 2;
+					CPU.Y       = read_imm();
+				} break;
+				
+				// LDA ind,X
+				case 0xA1: {
+					CPU.last_op = "LDA ind,X";
+					cycles      = 6;
+					CPU.A       = read_ind_x();
+				} break;
+				
+				// LDX imm
+				case 0xA2: {
+					CPU.last_op = "LDX imm";
+					cycles      = 2;
+					CPU.X       = read_imm();
+				} break;
+				
+				// LDY zpg
+				case 0xA4: {
+					CPU.last_op = "LDY zpg";
+					cycles      = 3;
+					CPU.Y       = read_zpg();
+				} break;
+				
+				// LDA zpg
+				case 0xA5: {
+					CPU.last_op = "LDA zpg";
+					cycles      = 3;
+					CPU.A       = read_zpg();
+				} break;
+				
+				// LDX zpg
+				case 0xA6: {
+					CPU.last_op = "LDX zpg";
+					cycles      = 3;
+					CPU.X       = read_zpg();
+				} break;
+				
+				// TAY impl
+				case 0xA8: {
+					CPU.last_op = "TAY impl";
+					cycles      = 2;
+					CPU.A       = CPU.Y;
+					CPU.update_ZN();
+				} break;
+				
+				// LDA imm
+				case 0xA9: {
+					CPU.last_op = "LDA imm";
+					cycles      = 2;
+					CPU.A       = read_imm();
+				} break;
+				
+				// TAX impl
+				case 0xAA: {
+					CPU.last_op = "TAX impl";
+					cycles      = 2;
+					CPU.A       = CPU.X;
+					CPU.update_ZN();
+				} break;
+				
+				// LDY abs
+				case 0xAC: {
+					CPU.last_op = "LDY abs";
+					cycles      = 4;
+					CPU.Y       = read_abs();
+				} break;
+				
+				// LDA abs
+				case 0xAD: {
+					CPU.last_op = "LDA abs";
+					cycles      = 4;
+					CPU.A       = read_abs();
+				} break;
+				
+				// LDX abs
+				case 0xAE: {
+					CPU.last_op = "LDX abs";
+					cycles      = 4;
+					CPU.X       = read_abs();
+				} break;
+				
+				// BCS rel
+				case 0xB0: {
+					CPU.last_op = "BCS rel";
+					cycles      = 2;
+					if ( CPU.read_flag(C) )
+						cycles += rel_jmp()? 2 : 1; 
+				} break;
+				
+				// LDA ind,Y
+				case 0xB1: {
+					CPU.last_op = "LDA ind,Y";
+					cycles      = 5;
+					CPU.A       = read_ind_y(cycles);
+				} break;
+				
+				// LDY zpg,X
+				case 0xB4: {
+					CPU.last_op = "LDY zpg,X";
+					cycles      = 4;
+					CPU.Y       = read_zpg_x();
+				} break;
+				
+				// LDA zpg,X
+				case 0xB5: {
+					CPU.last_op = "LDA zpg,X";
+					cycles      = 4;
+					CPU.A       = read_zpg_x();
+				} break;
+				
+				// LDX zpg,Y
+				case 0xB6: {
+					CPU.last_op = "LDX zpg,Y";
+					cycles      = 4;
+					CPU.X       = read_zpg_y();
+				} break;
+				
+				// CLV impl
+				case 0xB8: {
+					CPU.last_op = "CLV impl";
+					cycles      = 2;
+					CPU.clear_flag( V );
+				} break;
+				
+				// LDA abs,Y
+				case 0xB9: {
+					CPU.last_op = "LDA abs,Y";
+					cycles      = 4;
+					CPU.A       = read_abs_y(cycles);
+				} break;
+				
+				// TSX impl
+				case 0xBA: {
+					CPU.last_op = "TSX impl";
+					cycles      = 2;
+					CPU.SP      = CPU.X;
+					CPU.update_ZN();
+				} break;
+				
+				// LDY abs,X
+				case 0xBC: {
+					CPU.last_op = "LDY abs,X";
+					cycles      = 4;
+					CPU.Y       = read_abs_x(cycles);
+				} break;
+				
+				// LDA abs,X
+				case 0xBD: {
+					CPU.last_op = "LDA abs,X";
+					cycles      = 4;
+					CPU.A       = read_abs_x(cycles);
+				} break;
+				
+				// LDX abs,Y
+				case 0xBE: {
+					CPU.last_op = "LDX abs,Y";
+					cycles      = 4;
+					CPU.X       = read_abs_y(cycles);
+				} break;
+				
+				// CPY imm
+				case 0xC0: {
+					CPU.last_op = "CPY imm";
+					cycles      = 2;
+					compare( CPU.Y, read_imm() );
+				} break;
+				
+				// CMP ind,X
+				case 0xC1: {
+					CPU.last_op = "CMP ind,X";
+					cycles      = 6;
+					compare( CPU.A, read_ind_x() );
+				} break;
+				
+				// CPY zpg
+				case 0xC4: {
+					CPU.last_op = "CPY zpg";
+					cycles      = 3;
+					compare( CPU.Y, read_zpg() );
+				} break;
+				
+				// CMP zpg
+				case 0xC5: {
+					CPU.last_op = "CMP zpg";
+					cycles      = 3;
+					compare( CPU.A, read_zpg() );
+				} break;
+				
+				// DEC zpg
+				case 0xC6: {
+					CPU.last_op = "DEC zpg";
+					cycles      = 5;
+					DEC( read_zpg() );
+				} break;
+				
+				// INY impl
+				case 0xC8: {
+					CPU.last_op = "INY impl";
+					cycles      = 2;
+					INC( CPU.Y );
+				} break;
+				
+				// CMP imm
+				case 0xC9: {
+					CPU.last_op = "CMP imm";
+					cycles      = 2;
+					compare( CPU.A, read_imm() );
+				} break;
+				
+				// DEX impl
+				case 0xCA: {
+					CPU.last_op = "DEX impl";
+					cycles      = 2;
+					DEC( CPU.X );
+				} break;
+				
+				// CPY abs
+				case 0xCC: {
+					CPU.last_op = "CPY abs";
+					cycles      = 4;
+					compare( CPU.Y, read_abs() );
+				} break;
+				
+				// CMP abs
+				case 0xCD: {
+					CPU.last_op = "CMP abs";
+					cycles      = 4;
+					compare( CPU.A, read_abs() );
+				} break;
+				
+				// DEC abs
+				case 0xCE: {
+					CPU.last_op = "DEC abs";
+					cycles      = 6;
+					DEC( read_abs() );
+				} break;
+				
+				// BNE rel
+				case 0xD0: {
+					CPU.last_op = "BNE rel";
+					cycles      = 2;
+					if ( !CPU.read_flag(Z) )
+						cycles += rel_jmp()? 2 : 1; 
+				} break;
+				
+				// CMP ind,Y
+				case 0xD1: {
+					CPU.last_op = "CMP ind,Y";
+					cycles      = 5;
+					compare( CPU.A, read_ind_y(cycles) );
+				} break;
+				
+				// CMP zpg,X
+				case 0xD5: {
+					CPU.last_op = "CMP zpg,X";
+					cycles      = 4;
+					compare( CPU.A, read_zpg_x() );
+				} break;
+				
+				// DEC zpg,X
+				case 0xD6: {
+					CPU.last_op = "DEC zpg,X";
+					cycles      = 6;
+					DEC( read_zpg_x() );
+				} break;
+				
+				// CLD impl
+				case 0xD8: {
+					CPU.last_op = "CLD impl";
+					cycles      = 2;
+					CPU.clear_flag( D );
+				} break;
+				
+				// CMP abs,Y
+				case 0xD9: {
+					CPU.last_op = "CMP abs,Y";
+					cycles      = 4;
+					compare( CPU.A, read_abs_y(cycles) );
+				} break;
+				
+				// CMP abs,X
+				case 0xDD: {
+					CPU.last_op = "CMP abs,X";
+					cycles      = 4;
+					compare( CPU.A, read_abs_x(cycles) );
+				} break;
+				
+				// DEC abs,X
+				case 0xDE: {
+					CPU.last_op = "DEC abs,X";
+					cycles      = 7;
+					u8 dummy;
+					DEC( read_abs_x(dummy) ); // TODO: clean up
+				} break;
+				
+				// CPX imm
+				case 0xE0: {
+					CPU.last_op = "CPX imm";
+					cycles      = 2;
+					compare( CPU.X, read_imm() );
+				} break;
+				
+				// SBC ind,X
+				case 0xE1: {
+					CPU.last_op = "SBC ind,X";
+					cycles      = 6;
+					SBC( read_ind_x() );
+				} break;
+				
+				// CPX zpg
+				case 0xE4: {
+					CPU.last_op = "CPX zpg";
+					cycles      = 3;
+					compare( CPU.X, read_zpg() );
+				} break;
+				
+				// SBC zpg
+				case 0xE5: {
+					CPU.last_op = "SBC zpg";
+					cycles      = 3;
+					SBC( read_zpg() );
+				} break;
+				
+				// INC zpg
+				case 0xE6: {
+					CPU.last_op = "INC zpg";
+					cycles      = 5;
+					INC( read_zpg() );
+				} break;
+				
+				// INX impl
+				case 0xE8: {
+					CPU.last_op = "INX impl";
+					cycles      = 2;
+					INC( CPU.X );
+				} break;
+				
+				// SBC imm
+				case 0xE9: {
+					CPU.last_op = "SBC imm";
+					cycles      = 2;
+					SBC( read_imm() );
+				} break;
+				
+				// NOP impl
+				case 0xEA: {
+					CPU.last_op = "NOP impl";
+					cycles      = 2;
+				} break;
+				
+				// CPX abs
+				case 0xEC: {
+					CPU.last_op = "CPX abs";
+					cycles      = 4;
+					compare( CPU.X, read_abs() );
+				} break;
+				
+				// SBC abs
+				case 0xED: {
+					CPU.last_op = "SBC abs";
+					cycles      = 4;
+					SBC( read_abs() );
+				} break;
+				
+				// INC abs
+				case 0xEE: {
+					CPU.last_op = "INC abs";
+					cycles      = 6;
+					INC( read_abs() );
+				} break;
+				
+				//  BEQ rel
+				case 0xF0: {
+					CPU.last_op = " BEQ rel";
+					cycles      = 2;
+					if ( CPU.read_flag(Z) )
+						cycles += rel_jmp()? 2 : 1; 
+				} break;
+				
+				// SBC ind,Y
+				case 0xF1: {
+					CPU.last_op = "SBC ind,Y";
+					cycles      = 5;
+					SBC( read_ind_y(cycles) );
+				} break;
+				
+				// SBC zpg,X
+				case 0xF5: {
+					CPU.last_op = "SBC zpg,X";
+					cycles      = 4;
+					SBC( read_zpg_x() );
+				} break;
+				
+				// INC zpg,X
+				case 0xF6: {
+					CPU.last_op = "INC zpg,X";
+					cycles      = 6;
+					INC( read_zpg_x() );
+				} break;
+				
+				// SED impl
+				case 0xF8: {
+					CPU.last_op = "SED impl";
+					cycles      = 2;
+					CPU.set_flag( D );
+				} break;
+				
+				// SBC abs,Y
+				case 0xF9: {
+					CPU.last_op = "SBC abs,Y";
+					cycles      = 4;
+					SBC( read_abs_y(cycles) );
+				} break;
+				
+				// SBC abs,X
+				case 0xFD: {
+					CPU.last_op = "SBC abs,X";
+					cycles      = 4;
+					SBC( read_abs_x(cycles) );
+				} break;
+				
+				// INC abs,X
+				case 0xFE: {
+					CPU.last_op = "INC abs,X";
+					cycles      = 6;
+					u8 dummy;
+					INC( read_abs_x(dummy) ); // TODO: clean up
+				} break;
+			}
+			do {
+				auto cycle_length_us = (int)(1000000.0f / CPU.Hz);
+				//usleep( cycle_length_us ); // TODO: find portable alternative
+				std::this_thread::sleep_for( 1us * cycle_length_us );
+				++CPU.cc;
+			} while ( --cycles ); // TODO: verify
 		}
 	}
 };
 
+struct widget_i {
+	virtual ~widget_i() {}
+	virtual void redraw() = 0;
+	virtual void update() = 0;
+};
 
 
-struct cpu_debug_15x10_display_t {
+/*
+struct cpu_debug_15x10_display_t final: public widget_i {
 	cpu::cpu_t *CPU = nullptr;
 	u8 x=0, y=0;
 	
-	void
+	virtual void
 	update() noexcept
 	{
 		using namespace cpu;
@@ -1602,13 +1592,29 @@ struct cpu_debug_15x10_display_t {
 		);
 	}
 };
+*/
 
-struct cpu_debug_82x4_display_t {
+struct cpu_debug_82x4_display_t final: public widget_i {
+private:
 	cpu::cpu_t const *CPU = nullptr;
 	u8 x=0, y=0;
 	
+public:
+	cpu_debug_82x4_display_t() noexcept = default;
+	
+	cpu_debug_82x4_display_t( cpu::cpu_t const *CPU, u8 x, u8 y ) noexcept:
+		widget_i(), CPU(CPU), x(x), y(y)
+	{}
+	
+	~cpu_debug_82x4_display_t() noexcept final = default;
+	
 	void
-	update() noexcept
+	redraw() noexcept final
+	{
+	}
+	
+	void
+	update() noexcept final
 	{
 		using namespace cpu;
 		
@@ -1643,62 +1649,150 @@ struct cpu_debug_82x4_display_t {
 };
 
 
-struct ram_page_hex_display_t {
-	system_t const *system = nullptr;
-	u8  page_no=0;
-	u16 x=0, y=0;
+
+template <u8 width, u8 height>
+struct terminal_display_t final: public widget_i {
+private:
+	u8 const *block_start = nullptr;
+	u8 x=0, y=0;
+public:
+	terminal_display_t() noexcept = default;
+	
+	terminal_display_t( u8 const *block_start, u8 x, u8 y ):
+		block_start(block_start), x(x), y(y)
+	{}
+	
+	~terminal_display_t() noexcept final = default;
+	
+	void
+	redraw() noexcept final
+	{
+	}
 	
 	void
 	update() noexcept
 	{
-		constexpr u8 width          = 16 * 3 + 6;
-		const    u16 page_base_addr = page_no * 0x100;
+		static char hdr[3*(width+2)+1],
+		            ftr[3*(width+2)+1];
+		
+		static bool all_initialized = {
+			init_hdr(hdr,width) and
+			init_ftr(ftr,width)
+		}; (void) all_initialized;
+		
+		constexpr u16 last_row_addr = (height-1) * width;
+		
+		assert( block_start );
+		std::printf( "\033[?25l\033[%u;%uH" "%s" "\033[B\033[%uD", y, x, hdr, width+2 ); 
+		for ( u16 row_addr_offset  = 0;
+		          row_addr_offset  < last_row_addr;
+		          row_addr_offset += width )
+		{
+			std::printf( "│%-*s│" "\033[B\033[%uD", width, block_start + row_addr_offset, width+2 );
+		}
+		std::puts( ftr );
+	}
+};
+
+
+
+struct ram_page_hex_display_t final: public widget_i {
+	// TODO: refactor and split into separate types:
+	//       zpg_mem_display_t (page 0, show non-zero values as green, zero values as red)
+	//       stk_mem_display_t (page 1, highlight all memory <= SP)
+	//       prg_mem_display_t (focused on page of PC; highlight current instruction + args, otherwise red/green)
+private:
+	system_t const *system = nullptr;
+	u8  page_no=0;
+	u16 x=0, y=0;
+	
+public:
+	ram_page_hex_display_t() noexcept = default;
+	
+	ram_page_hex_display_t( system_t const *system, u8 page_no, u16 x, u16 y ) noexcept:
+		widget_i(), system(system), page_no(page_no), x(x), y(y)
+	{}
+	
+	~ram_page_hex_display_t() noexcept final = default;
+	
+	void
+	redraw() noexcept final
+	{
+	}
+	
+	void
+	update() noexcept final
+	{
+#		define GOTO_NEXT_LINE   "\033[B\033[55D" 
+		const u16 page_base_addr = page_no * 0x100;
 		assert( system );
 		
-		std::printf( "\033[?25l\033[%u;%uH"
-			"╭─────┰───────────────────────────────────────────────╮"            "\033[B\033[55D"
-			"│" LABEL "Pg.%02" PRIX8 BORDER "┃" DIM_CLR "0" BRT_CLR "0 " DIM_CLR "0" BRT_CLR "1 "
-			DIM_CLR "0" BRT_CLR "2 " DIM_CLR "0" BRT_CLR "3 " DIM_CLR "0" BRT_CLR "4 " DIM_CLR "0"
-			BRT_CLR "5 " DIM_CLR "0" BRT_CLR "6 " DIM_CLR "0" BRT_CLR "7 " DIM_CLR "0" BRT_CLR "8 "
-			DIM_CLR "0" BRT_CLR "9 " DIM_CLR "0" BRT_CLR "A " DIM_CLR "0" BRT_CLR "B " DIM_CLR "0"
-			BRT_CLR "C " DIM_CLR "0" BRT_CLR "D " DIM_CLR "0" BRT_CLR "E " DIM_CLR "0" BRT_CLR "F"
-			BORDER "│"  "\033[B\033[55D"
-			"┝━━━━━╋━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥"            "\033[B\033[55D",
-			y, x, page_no
+		std::printf( "\033[?25l\033[%u;%uH╭─────┰───────────────────────────────────────────────╮"
+		             GOTO_NEXT_LINE "│" LABEL, y, x );
+		if      ( page_no == 0 )
+			std::printf( " ZPG " );
+		else if ( page_no == 1 )
+			std::printf( " STK " );
+		else if ( page_no == 2 ) // TODO: change after proper display emulation is implemented
+			std::printf( " DSP " );
+		else if ( page_no == 3 ) // TODO: change after user is free to start programs anywhere
+			std::printf( " PRG " );
+		else
+			std::printf( "Pg.%01" PRIX8, page_no );
+
+		std::printf( BORDER "┃"    DIM_CLR "0"  BRT_CLR "0 " DIM_CLR "0"  BRT_CLR "1 "
+			DIM_CLR "0"  BRT_CLR "2 " DIM_CLR "0"  BRT_CLR "3 " DIM_CLR "0"  BRT_CLR "4 " DIM_CLR "0"
+			BRT_CLR "5 " DIM_CLR "0"  BRT_CLR "6 " DIM_CLR "0"  BRT_CLR "7 " DIM_CLR "0"  BRT_CLR "8 "
+			DIM_CLR "0"  BRT_CLR "9 " DIM_CLR "0"  BRT_CLR "A " DIM_CLR "0"  BRT_CLR "B " DIM_CLR "0"
+			BRT_CLR "C " DIM_CLR "0"  BRT_CLR "D " DIM_CLR "0"  BRT_CLR "E " DIM_CLR "0"  BRT_CLR "F"
+			BORDER "│" GOTO_NEXT_LINE
+			"┝━━━━━╋━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥" GOTO_NEXT_LINE
 		);
-			
+		u16 const stack_end = 0x0100 + system->CPU.SP;
 		u16 curr_addr = page_base_addr;
 		for ( u8 row=0; row<0x10; ++row ) {
 			std::printf( "│" DIM_CLR "%02" PRIX8 BRT_CLR "%1" PRIX8 DIM_CLR "0" BORDER " ┃", page_no, row );
 			for ( u8 col=0; col<0x10; ++col ) {
 				auto const curr_byte = system->RAM[curr_addr++];
-				std::printf( "\e[1;%sm%02" PRIX8 "\e[0m%s", (curr_addr==system->CPU.PC? "1;40;93" : curr_byte? "32":"31"), curr_byte, col==0xF?"\e[0m":" " );
+				if ( page_no == 1 ) // stack
+					std::printf( "\e[%sm", curr_addr <= stack_end? "1;97":"90" );
+				else 
+					std::printf( "\e[1;%sm", curr_addr==system->CPU.PC? "1;40;93" : curr_byte? "32":"31" );
+				std::printf( "%02" PRIX8 "\e[0m%s", curr_byte, col==0xF?"":" " );
 			}
-			std::printf( "│" "\033[B\033[55D" );
+			std::printf( "\e[0m│" GOTO_NEXT_LINE );
 		}
 		std::printf("╰─────┸───────────────────────────────────────────────╯");
+#		undef GOTO_NEXT_LINE
 	}
 };
 
+
+// TODO: usleep in UI?
 
 
 int
 main( int const argc, char const *const argv[] )
 {
 	auto system   = system_t {};
-	auto terminal = terminal_display_t<80,25> {  system.RAM+0x0200,    2,1  };
-	auto dbg_cpu1 = cpu_debug_15x10_display_t { &system.CPU,         124,0  };
-	auto dbg_cpu2 = cpu_debug_82x4_display_t  { &system.CPU,           0,27 };
+	u8 *display_block = system.RAM+0x0200;
+	auto terminal = terminal_display_t<80,25> { display_block, 2,1  };
+	//auto dbg_cpu_old = cpu_debug_15x10_display_t { &system.CPU, 124,0  };
+	auto dbg_cpu = cpu_debug_82x4_display_t  { &system.CPU, 0,27 };
 	
 	u8 constexpr pg_x=2, pg_y=2;
-	ram_page_hex_display_t  hex_page_displays[pg_x * pg_y] {};
+	widget_i *widgets[pg_x * pg_y + 2] {};
+	
+	widgets[0] = (widget_i*)&terminal;
+	widgets[1] = (widget_i*)&dbg_cpu;
 	u8 pg_no = 0;
 	for ( u8 y=0; y<pg_y; ++y )
 		for ( u8 x=0; x<pg_x; ++x )
-			hex_page_displays[y*pg_x+x] = ram_page_hex_display_t { &system, pg_no++, u16(x*56U+85U), u16(y*20U+1U) };
+			widgets[2 + y*pg_x+x] = new ram_page_hex_display_t { &system, pg_no++, u16(x*56U+85U), u16(y*20U+1U) };
+	
 	system.CPU.Hz = argc == 2? std::atoi(argv[1]) : 500;
 	auto txt      = " xx Hello world!";
-	std::memcpy( (void*)terminal.block_start, txt, 16 );
+	std::memcpy( (void*)display_block, txt, 16 );
 	
 	// Test program; kinda broken (TODO: fix)
 	u8 prg[] = {
@@ -1750,10 +1844,39 @@ main( int const argc, char const *const argv[] )
 	
 	f32 time_since_draw_ms = draw_frame_window_ms,
 	    frame_time_elapsed = .0f;
+	
+	auto cpu_thread = std::jthread(
+		[&system] {
+			system.update();
+		}
+	);
+
+	auto target_framerate = 30;
+	
+	auto gui_thread = std::jthread(
+		[&widgets, &target_framerate] {
+			while (1) {
+				if ( false ) // TODO
+					for ( auto *w: widgets )
+						w->redraw();
+				for ( auto *w: widgets )
+					w->update();
+				std::this_thread::sleep_for( 16ms ); //1'000'000us / target_framerate );
+			}
+		}
+	);
+
+	/*
+	auto user_io_thread = std::jthread(
+		[&keyboard,&mouse] {
+			keyboard.update();
+			mouse.update();
+		}
+	);
+	*/
+	/*
 	while (true) {
 		frame_time_elapsed = timer();
-			
-		system.update();
 		
 		if ( time_since_draw_ms >= draw_frame_window_ms ) {
 			time_since_draw_ms -= draw_frame_window_ms;
@@ -1767,5 +1890,11 @@ main( int const argc, char const *const argv[] )
 		frame_time_elapsed  = timer() - frame_time_elapsed;
 		time_since_draw_ms += frame_time_elapsed;
 	}
+	*/
+	
+	while (1); // TODO: remove
+	
+	for ( auto *w: widgets )
+		delete w; // TODO: get rid of later with RAAI
 }
 
