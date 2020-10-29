@@ -16,10 +16,11 @@ using namespace::std::literals;
 //#include <ctime>    // for dt
 
 // TODO: suffix with CLR?
-#define LABEL   "\033[0;1;33m"
-#define BORDER  "\033[0;1m"
-#define DIM_CLR "\033[0;90m"
-#define BRT_CLR "\033[0;97m"
+#define LABEL         "\033[1;33m"
+#define OUTER_BORDER  "\033[0;1;97m"
+#define INNER_BORDER  "\033[1;97m"
+#define DIM_CLR       "\033[90m"
+#define BRT_CLR       "\033[97m"
 
 using u8  = std::uint8_t;
 using u16 = std::uint16_t;
@@ -472,22 +473,27 @@ public:
 #define NUM_CLR "\033[0;1;97m"
 #define REG_CLR "\033[0;1;36m"
 		//std::fprintf( stderr, "at(op_code: %02" PRIX8 ")\n", op_code );
-		auto const info = op_meta_tbl.at(op_code); // TODO: handle exception?
-		std::printf( "\033[0;1;33m%.4s\033[0m ", info.mnemonic ); // print instruction
-		switch ( info.address_mode ) {
-			case implied:     std::printf(         " "         " "         "  "                " "           " "           " "         " "             ); break;
-			case accumulator: std::printf( REG_CLR " "         "A"         "  "                " "           " "           " "         " "             ); break;
-			case immediate:   std::printf( IMM_CLR "#" HEX_CLR "$" NUM_CLR "%02" PRIX8         " "           " "           " "         " ", arg1       ); break;
-			case absolute:    std::printf(         " " HEX_CLR "$" NUM_CLR "%02" PRIX8         "%02"         PRIX8         " "         " ", arg1, arg2 ); break;
-			case absolute_x:  std::printf(         " " HEX_CLR "$" NUM_CLR "%02" PRIX8         "%02"         PRIX8 SYM_CLR "," REG_CLR "X", arg1, arg2 ); break;
-			case absolute_y:  std::printf(         " " HEX_CLR "$" NUM_CLR "%02" PRIX8         "%02"         PRIX8 SYM_CLR "," REG_CLR "Y", arg1, arg2 ); break;
-			case zero_page:   std::printf( ZPG_CLR "*" HEX_CLR "$" NUM_CLR "%02" PRIX8         " "           " "           " "         " ", arg1       ); break;
-			case zero_page_x: std::printf( ZPG_CLR "*" HEX_CLR "$" NUM_CLR "%02" PRIX8 SYM_CLR ","   REG_CLR "X"           " "         " ", arg1       ); break;
-			case zero_page_y: std::printf( ZPG_CLR "*" HEX_CLR "$" NUM_CLR "%02" PRIX8 SYM_CLR ","   REG_CLR "Y"           " "         " ", arg1       ); break;
-			case indirect:    std::printf( SYM_CLR "(" HEX_CLR "$" NUM_CLR "%02" PRIX8         "%02"         PRIX8 SYM_CLR ")"         " ", arg1, arg2 ); break;
-			case indirect_x:  std::printf( SYM_CLR "(" HEX_CLR "$" NUM_CLR "%02" PRIX8 SYM_CLR ","   REG_CLR "X"   SYM_CLR ")"         " ", arg1       ); break;
-			case indirect_y:  std::printf( SYM_CLR "(" HEX_CLR "$" NUM_CLR "%02" PRIX8 SYM_CLR ")"           ","   REG_CLR "Y"         " ", arg1       ); break;
-			case relative:    std::printf(         " " HEX_CLR "$" NUM_CLR "%02" PRIX8         " "           " "           " "         " ", arg1       ); break;
+		try {
+			auto const info = op_meta_tbl.at(op_code); // TODO: handle exception?
+			std::printf( "\033[0;1;33m%.3s\033[0m ", info.mnemonic ); // print instruction
+			switch ( info.address_mode ) {
+				case implied:     std::printf(         " "         " "         "  "                " "           " "           " "         " "             ); break;
+				case accumulator: std::printf( REG_CLR " "         "A"         "  "                " "           " "           " "         " "             ); break;
+				case immediate:   std::printf( IMM_CLR "#" HEX_CLR "$" NUM_CLR "%02" PRIX8         " "           " "           " "         " ", arg1       ); break;
+				case absolute:    std::printf(         " " HEX_CLR "$" NUM_CLR "%02" PRIX8         "%02"         PRIX8         " "         " ", arg1, arg2 ); break;
+				case absolute_x:  std::printf(         " " HEX_CLR "$" NUM_CLR "%02" PRIX8         "%02"         PRIX8 SYM_CLR "," REG_CLR "X", arg1, arg2 ); break;
+				case absolute_y:  std::printf(         " " HEX_CLR "$" NUM_CLR "%02" PRIX8         "%02"         PRIX8 SYM_CLR "," REG_CLR "Y", arg1, arg2 ); break;
+				case zero_page:   std::printf( ZPG_CLR "*" HEX_CLR "$" NUM_CLR "%02" PRIX8         " "           " "           " "         " ", arg1       ); break;
+				case zero_page_x: std::printf( ZPG_CLR "*" HEX_CLR "$" NUM_CLR "%02" PRIX8 SYM_CLR ","   REG_CLR "X"           " "         " ", arg1       ); break;
+				case zero_page_y: std::printf( ZPG_CLR "*" HEX_CLR "$" NUM_CLR "%02" PRIX8 SYM_CLR ","   REG_CLR "Y"           " "         " ", arg1       ); break;
+				case indirect:    std::printf( SYM_CLR "(" HEX_CLR "$" NUM_CLR "%02" PRIX8         "%02"         PRIX8 SYM_CLR ")"         " ", arg1, arg2 ); break;
+				case indirect_x:  std::printf( SYM_CLR "(" HEX_CLR "$" NUM_CLR "%02" PRIX8 SYM_CLR ","   REG_CLR "X"   SYM_CLR ")"         " ", arg1       ); break;
+				case indirect_y:  std::printf( SYM_CLR "(" HEX_CLR "$" NUM_CLR "%02" PRIX8 SYM_CLR ")"           ","   REG_CLR "Y"         " ", arg1       ); break;
+				case relative:    std::printf(         " " HEX_CLR "$" NUM_CLR "%02" PRIX8         " "           " "           " "         " ", arg1       ); break;
+			}
+		}
+		catch(...) {
+			std::printf("\033[0;1;31mERR INVALID " );
 		}
 #undef SYM_CLR
 #undef IMM_CLR
@@ -1706,8 +1712,16 @@ public:
 					u8 dummy;
 					INC( read_abs_x(dummy) ); // TODO: clean up
 				} break;
+				
+				default: {
+					assert( false and "Invalid OP code!" );
+					cycles = 0;
+					// TODO: interrupt?
+				}
 			}
 			history.push( addr, instruction, cycles, arg1, arg2 );
+			if ( cycles == 0 )
+				std::this_thread::sleep_for( 10s ); // TEMP
 			do {
 				auto cycle_length_us = (int)(1000000.0f / CPU.Hz);
 				//usleep( cycle_length_us ); // TODO: find portable alternative
@@ -1802,13 +1816,13 @@ public:
 		std::printf( "\033[?25l\033[%u;%uH", y, x ); 
 		std::printf( 
 			"╭────┰────────────────┰──────┰────┰────┰────┰────┰──────────┰──────────────────────╮"  "\033[B\033[84D"
-			"│ " LABEL "F:" BORDER " ┃ " LABEL "N V BB D I Z C" BORDER " ┃ " LABEL "PC:" BORDER
-			"  ┃ " LABEL "S:" BORDER " ┃ " LABEL "A:" BORDER " ┃ " LABEL "X:" BORDER " ┃ " LABEL "Y:" BORDER
-			" ┃ " LABEL "Clk.Spd:" BORDER " ┃ " LABEL "Elapsed Cycle Count:" BORDER " │"  "\033[B\033[84D"
-			"│ " BRT_CLR "%02" PRIX8 BORDER " ┃ %s %s %s%s %s %s %s %s ┃ " BRT_CLR "%04" PRIX16 BORDER " ┃ "
-			BRT_CLR "%02" PRIX8 BORDER " ┃ " BRT_CLR "%02" PRIX8 BORDER
-			" ┃ " BRT_CLR "%02" PRIX8 BORDER " ┃ " BRT_CLR "%02" PRIX8 BORDER " ┃ " BRT_CLR "%5" PRIu16 BORDER " Hz" 
-			" ┃ " DIM_CLR "%0*d" BRT_CLR "%" PRIu64 BORDER " │"                   "\033[B\033[84D"
+			"│ " LABEL "F:" OUTER_BORDER " ┃ " LABEL "N V BB D I Z C" OUTER_BORDER " ┃ " LABEL "PC:" OUTER_BORDER
+			"  ┃ " LABEL "S:" OUTER_BORDER " ┃ " LABEL "A:" OUTER_BORDER " ┃ " LABEL "X:" OUTER_BORDER " ┃ " LABEL "Y:" OUTER_BORDER
+			" ┃ " LABEL "Clk.Spd:" OUTER_BORDER " ┃ " LABEL "Elapsed Cycle Count:" OUTER_BORDER " │"  "\033[B\033[84D"
+			"│ " BRT_CLR "%02" PRIX8 OUTER_BORDER " ┃ %s %s %s%s %s %s %s %s ┃ " BRT_CLR "%04" PRIX16 OUTER_BORDER " ┃ "
+			BRT_CLR "%02" PRIX8 OUTER_BORDER " ┃ " BRT_CLR "%02" PRIX8 OUTER_BORDER
+			" ┃ " BRT_CLR "%02" PRIX8 OUTER_BORDER " ┃ " BRT_CLR "%02" PRIX8 OUTER_BORDER " ┃ " BRT_CLR "%5" PRIu16 OUTER_BORDER " Hz" 
+			" ┃ " DIM_CLR "%0*d" BRT_CLR "%" PRIu64 OUTER_BORDER " │"                   "\033[B\033[84D"
 			"╰────┸────────────────┸──────┸────┸────┸────┸────┸──────────┸──────────────────────╯",
 			CPU->P,
 			CPU->read_flag(N)?set:unset, CPU->read_flag(V)?set:unset, CPU->read_flag(BU)?set:unset, CPU->read_flag(BL)?set:unset,
@@ -1893,7 +1907,7 @@ public:
 	{
 		assert( system );
 		
-		std::printf( "\033[?25l\033[%u;%uH" BORDER "╭────────────────────────────────╮" "\033[B\033[%uG", y, x, x ); 
+		std::printf( "\033[?25l\033[%u;%uH" OUTER_BORDER "╭────────────────────────────────╮" "\033[B\033[%uG", y, x, x ); 
 		
 		u8 entries_to_print = system->get_history().size();
 		if ( entries_to_print > rows )
@@ -1901,14 +1915,72 @@ public:
 		
 		for ( u8 i=0; i<entries_to_print; ++i ) {
 			auto const e    = system->get_history().peek(i);
-			std::printf( BORDER "│ " "\033[0;38m" "%04" PRIX16 "   ", e.addr );
+			std::printf( OUTER_BORDER "│ " "\033[0;38m" "%04" PRIX16 "   ", e.addr );
 			system_t::print_asm( e.op, e.arg1, e.arg2 );
-			std::printf( "\033[0;90m ; %" PRIu8 " cycles " BORDER "│" "\033[B\033[%uG", e.cycles, x );
+			std::printf( "\033[0;90m ; %" PRIu8 " cycles " OUTER_BORDER "│" "\033[B\033[%uG", e.cycles, x );
 		}
 		for ( u8 i=rows-entries_to_print; i; --i )
-			std::printf( BORDER "│                                │" "\033[B\033[%uG", x );
-		std::printf( BORDER "╰────────────────────────────────╯" );
+			std::printf( OUTER_BORDER "│                                │" "\033[B\033[%uG", x );
+		std::printf( OUTER_BORDER "╰────────────────────────────────╯" );
 // std::printf( "\033[999;0H" LABEL "Last OP: " BRT_CLR "%-18s\033[0m", system_t::op_meta_tbl.at(system->history.peek().op).format ); // TODO: refactor
+	}
+};
+
+
+
+struct stack_hex_display_t final: public widget_i
+{
+	// TODO: refactor and split into separate types:
+	//       zpg_mem_display_t (page 0, show non-zero values as green, zero values as red)
+	//       stk_mem_display_t (page 1, highlight all memory <= SP)
+	//       prg_mem_display_t (focused on page of PC; highlight current instruction + args, otherwise red/green)
+private:
+	system_t const *system = nullptr;
+	u16 x=0, y=0;
+	
+public:
+	stack_hex_display_t() noexcept = default;
+	
+	stack_hex_display_t( system_t const *system, u16 x, u16 y ) noexcept:
+		widget_i(), system(system), x(x), y(y)
+	{}
+	
+	~stack_hex_display_t() noexcept final = default;
+	
+	void
+	redraw() noexcept final
+	{
+	}
+	
+	void
+	update() noexcept final
+	{
+#		define GOTO_NEXT_LINE   "\033[B\033[55D" 
+		const u16 page_base_addr = 0x0100;
+		assert( system );
+		auto const &CPU = system->get_cpu();
+		auto const *RAM = system->get_ram();
+		u16  const stack_end = 0x0100 + CPU.SP;
+		
+		std::printf( "\033[?25l\033[%u;%uH" OUTER_BORDER "╭─────┰───────────────────────────────────────────────╮"
+		             GOTO_NEXT_LINE "│" LABEL "STACK", y, x );
+		
+		std::printf( INNER_BORDER "┃" );
+		for ( u8 col=0; col<0x10; ++col )
+			std::printf( DIM_CLR "0"  "%s%" PRIX8 "%s", (page_base_addr+col == (CPU.PC&0xFF0F)? LABEL : BRT_CLR), col, (col==0xF? "":" ") );
+		std::printf( OUTER_BORDER "│" GOTO_NEXT_LINE "┝" INNER_BORDER "━━━━━╋━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" OUTER_BORDER "┥" GOTO_NEXT_LINE );
+		u16 curr_addr = page_base_addr;
+		for ( u8 row=0; row<0x10; ++row ) {
+			std::printf( OUTER_BORDER "│" "\033[90m" "01" BRT_CLR "%1" PRIX8 DIM_CLR "0" INNER_BORDER " ┃", row );
+			for ( u8 col=0; col<0x10; ++col, ++curr_addr ) {
+				auto const curr_byte = RAM[curr_addr];
+				std::printf( "\033[%sm", curr_addr <= stack_end? "1;97":"90" );
+				std::printf( "%02" PRIX8 "%s", curr_byte, col==0xF?"":" " );
+			}
+			std::printf( OUTER_BORDER "│" GOTO_NEXT_LINE );
+		}
+		std::printf("╰─────┸───────────────────────────────────────────────╯");
+#		undef GOTO_NEXT_LINE
 	}
 };
 
@@ -1946,7 +2018,7 @@ public:
 		const u16 page_base_addr = page_no * 0x100;
 		assert( system );
 		
-		std::printf( "\033[?25l\033[%u;%uH" BORDER "╭─────┰───────────────────────────────────────────────╮"
+		std::printf( "\033[?25l\033[%u;%uH" OUTER_BORDER "╭─────┰───────────────────────────────────────────────╮"
 		             GOTO_NEXT_LINE "│" LABEL, y, x );
 		if      ( page_no == 0 )
 			std::printf( " ZPG " );
@@ -1958,30 +2030,107 @@ public:
 			std::printf( " PRG " );
 		else
 			std::printf( "Pg.%02" PRIX8, page_no );
-
-		std::printf( BORDER "┃"    DIM_CLR "0"  BRT_CLR "0 " DIM_CLR "0"  BRT_CLR "1 "
-			DIM_CLR "0"  BRT_CLR "2 " DIM_CLR "0"  BRT_CLR "3 " DIM_CLR "0"  BRT_CLR "4 " DIM_CLR "0"
-			BRT_CLR "5 " DIM_CLR "0"  BRT_CLR "6 " DIM_CLR "0"  BRT_CLR "7 " DIM_CLR "0"  BRT_CLR "8 "
-			DIM_CLR "0"  BRT_CLR "9 " DIM_CLR "0"  BRT_CLR "A " DIM_CLR "0"  BRT_CLR "B " DIM_CLR "0"
-			BRT_CLR "C " DIM_CLR "0"  BRT_CLR "D " DIM_CLR "0"  BRT_CLR "E " DIM_CLR "0"  BRT_CLR "F"
-			BORDER "│" GOTO_NEXT_LINE
-			"┝━━━━━╋━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥" GOTO_NEXT_LINE
-		);
+		
 		auto const &CPU = system->get_cpu();
 		auto const *RAM = system->get_ram();
 		u16  const stack_end = 0x0100 + CPU.SP;
+
+		std::printf( INNER_BORDER "┃" );
+		for ( u8 col=0; col<0x10; ++col )
+			std::printf( DIM_CLR "0"  "%s%" PRIX8 "%s", (page_base_addr+col == (CPU.PC&0xFF0F)? LABEL : BRT_CLR), col, (col==0xF? "":" ") );
+		std::printf( OUTER_BORDER "│" GOTO_NEXT_LINE "┝" INNER_BORDER "━━━━━╋━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" OUTER_BORDER "┥" GOTO_NEXT_LINE );
 		u16 curr_addr = page_base_addr;
 		for ( u8 row=0; row<0x10; ++row ) {
-			std::printf( "│" "\033[0;38m" "%02" PRIX8 BRT_CLR "%1" PRIX8 DIM_CLR "0" BORDER " ┃", page_no, row );
-			for ( u8 col=0; col<0x10; ++col ) {
-				auto const curr_byte = RAM[curr_addr++];
+			bool is_active_row = (curr_addr&0xFFF0)==(CPU.PC&0xFFF0);
+			std::printf( OUTER_BORDER "│" "%s" "\033[1;96m%02" PRIX8 "%s%1" PRIX8 DIM_CLR "0" INNER_BORDER " ┃",
+			             (is_active_row? "\033[1;48;5;232m":""), page_no, (is_active_row? LABEL : BRT_CLR), row );
+			for ( u8 col=0; col<0x10; ++col, ++curr_addr ) {
+				bool is_active_col = (curr_addr&0xFF0F) == (CPU.PC&0xFF0F);
+				auto const curr_byte = RAM[curr_addr];
 				if ( page_no == 1 ) // stack
 					std::printf( "\033[%sm", curr_addr <= stack_end? "1;97":"90" );
-				else 
-					std::printf( "\033[1;%sm", curr_addr==CPU.PC? "1;40;93" : curr_byte? "32":"31" );
-				std::printf( "%02" PRIX8 "\033[0m%s", curr_byte, col==0xF?"":" " );
+				else {
+					std::printf( "\033[1;%sm", curr_addr==CPU.PC? "1;93" : curr_byte? "32":"31" );
+				}
+				if ( not is_active_row )
+					std::printf( "%s" "%02" PRIX8 "\033[0m%s", (is_active_col? "\033[1;48;5;232m":""), curr_byte, col==0xF?"":" " );
+				else
+					std::printf( "%02" PRIX8 "%s", curr_byte, col==0xF?"":" " );
 			}
-			std::printf( "\033[0m│" GOTO_NEXT_LINE );
+			std::printf( OUTER_BORDER "│" GOTO_NEXT_LINE );
+		}
+		std::printf("╰─────┸───────────────────────────────────────────────╯");
+#		undef GOTO_NEXT_LINE
+	}
+};
+
+
+
+struct program_hex_display_t final: public widget_i
+{
+	// TODO: refactor and split into separate types:
+	//       zpg_mem_display_t (page 0, show non-zero values as green, zero values as red)
+	//       stk_mem_display_t (page 1, highlight all memory <= SP)
+	//       prg_mem_display_t (focused on page of PC; highlight current instruction + args, otherwise red/green)
+private:
+	system_t const *system = nullptr;
+	u16 x=0, y=0;
+	
+public:
+	program_hex_display_t () noexcept = default;
+	
+	program_hex_display_t ( system_t const *system, u16 x, u16 y ) noexcept:
+		widget_i(), system(system), x(x), y(y)
+	{}
+	
+	~program_hex_display_t () noexcept final = default;
+	
+	void
+	redraw() noexcept final
+	{
+	}
+	
+	void
+	update() noexcept final
+	{
+#		define GOTO_NEXT_LINE   "\033[B\033[55D" 
+#		define CROSS_CLR        "\033[48;5;237m"
+		assert( system );
+		auto const &CPU    = system->get_cpu();
+		auto const *RAM    = system->get_ram();
+		u16  const page_no = CPU.PC >> 8;
+		
+		std::printf( "\033[?25l\033[%u;%uH" OUTER_BORDER "╭─────┰───────────────────────────────────────────────╮"
+		             GOTO_NEXT_LINE "│" LABEL "Pg.%02" PRIX8, y, x, page_no );
+		
+		std::printf( INNER_BORDER "┃" );
+		for ( u8 col=0; col<0x10; ++col ) {
+			auto const is_active_col = col == (CPU.PC&0xF);
+			std::printf( "%s" DIM_CLR "0"  "%s%" PRIX8 "\033[0m%s", (is_active_col? CROSS_CLR : ""), (is_active_col? LABEL : BRT_CLR), col, (col==0xF? "":" ") );
+		}
+		
+		std::printf( OUTER_BORDER "│" GOTO_NEXT_LINE "┝" INNER_BORDER "━━━━━╋" );
+		
+		for ( u8 col=0; col<0x10; ++col )
+			std::printf( "%s", col == (CPU.PC&0xF)? CROSS_CLR "━━\033[0m" INNER_BORDER "━" : "━━━" );
+		
+		std::printf( OUTER_BORDER "\033[D┥" GOTO_NEXT_LINE );
+		
+		u16 curr_addr = CPU.PC & 0xFF00;
+		for ( u8 row=0; row<0x10; ++row ) {
+			bool is_active_row = (curr_addr&0xFFF0)==(CPU.PC&0xFFF0);
+			std::printf( OUTER_BORDER "│" "%s" "%02" PRIX8 "%s%1" PRIX8 DIM_CLR "0" INNER_BORDER " ┃",
+			             (is_active_row? CROSS_CLR "\033[1;33m" : "\033[90m"), page_no, (is_active_row? LABEL : BRT_CLR), row );
+			for ( u8 col=0; col<0x10; ++col, ++curr_addr ) {
+				bool is_active_col = (curr_addr&0xFF0F) == (CPU.PC&0xFF0F);
+				auto const curr_byte = RAM[curr_addr];
+				std::printf( "\033[1;%sm", curr_addr==CPU.PC? "1;93;48;5;235" : curr_byte? "32":"31" );
+				if ( not is_active_row )
+					std::printf( "%s" "%02" PRIX8 "\033[0m%s", (is_active_col? CROSS_CLR : ""), curr_byte, col==0xF?"":" " );
+				else
+					std::printf( "%02" PRIX8 CROSS_CLR "%s", curr_byte, col==0xF?"":" " );
+			}
+			std::printf( OUTER_BORDER "│" GOTO_NEXT_LINE );
 		}
 		std::printf("╰─────┸───────────────────────────────────────────────╯");
 #		undef GOTO_NEXT_LINE
@@ -1995,20 +2144,25 @@ main( int const argc, char const *const argv[] )
 {
 	auto system        = system_t {};
 	u8 *display_block  = system.get_ram()+0x0200;
-	auto terminal      = terminal_display_t<80,25> { display_block, 2,1  };
-	//auto dbg_cpu_old = cpu_debug_15x10_display_t { &system.CPU, 124,0  };
-	auto dbg_cpu       = cpu_debug_82x4_display_t  { &system.get_cpu(), 0,27 };
-	auto history       = history_t<48>             { &system, 0, 31 };
-	u8 constexpr pg_x=4, pg_y=4;
-	widget_i *widgets[pg_x * pg_y + 3] {};
-	
-	widgets[0] = (widget_i*)&terminal;
-	widgets[1] = (widget_i*)&dbg_cpu;
-	widgets[2] = (widget_i*)&history;
-	u8 pg_no = 0;
-	for ( u8 y=0; y<pg_y; ++y )
-		for ( u8 x=0; x<pg_x; ++x )
-			widgets[3 + y*pg_x+x] = new ram_page_hex_display_t { &system, pg_no++, u16(x*56U+85U), u16(y*20U+1U) };
+	auto terminal      = terminal_display_t<80,25> { display_block,        2,  1 };
+	//auto dbg_cpu_old = cpu_debug_15x10_display_t { &system.CPU,        124,  0 };
+	auto dbg_cpu       = cpu_debug_82x4_display_t  { &system.get_cpu(),    0, 27 };
+	auto history       = history_t<20>             { &system,              0, 31 };
+	auto stk_display   = stack_hex_display_t       { &system,             85,  1 };
+	auto prg_display   = program_hex_display_t     { &system,             85, 21 };
+//	u8 constexpr pg_x=2, pg_y=2;
+//	widget_i *widgets[pg_x * pg_y + 3] {};
+	widget_i *widgets[] {
+		&terminal,
+		&dbg_cpu,
+		&history,
+		&stk_display,
+		&prg_display
+	};
+//	u8 pg_no = 0;
+//	for ( u8 y=0; y<pg_y; ++y )
+//		for ( u8 x=0; x<pg_x; ++x )
+//			widgets[3 + y*pg_x+x] = new ram_page_hex_display_t { &system, pg_no++, u16(x*56U+85U), u16(y*20U+1U) };
 	
 	system.get_cpu().Hz = argc > 1? std::atoi(argv[1]) : 500;
 	auto txt      = " xx Hello world!";
