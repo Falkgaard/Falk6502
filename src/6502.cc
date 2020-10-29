@@ -16,10 +16,10 @@ using namespace::std::literals;
 //#include <ctime>    // for dt
 
 // TODO: suffix with CLR?
-#define LABEL   "\e[0;1;33m"
-#define BORDER  "\e[0;1m"
-#define DIM_CLR "\e[0;90m"
-#define BRT_CLR "\e[0;97m"
+#define LABEL   "\033[0;1;33m"
+#define BORDER  "\033[0;1m"
+#define DIM_CLR "\033[0;90m"
+#define BRT_CLR "\033[0;97m"
 
 using u8  = std::uint8_t;
 using u16 = std::uint16_t;
@@ -465,15 +465,15 @@ public:
 	           u8 const arg1=0,
 	           u8 const arg2=0 )
 	{
-#define SYM_CLR "\e[0;1;33m"
-#define IMM_CLR "\e[0;1;31m"
-#define ZPG_CLR "\e[0;1;37m"
-#define HEX_CLR "\e[0;1;93m"
-#define NUM_CLR "\e[0;1;97m"
-#define REG_CLR "\e[0;1;36m"
+#define SYM_CLR "\033[0;1;33m"
+#define IMM_CLR "\033[0;1;31m"
+#define ZPG_CLR "\033[0;1;37m"
+#define HEX_CLR "\033[0;1;93m"
+#define NUM_CLR "\033[0;1;97m"
+#define REG_CLR "\033[0;1;36m"
 		//std::fprintf( stderr, "at(op_code: %02" PRIX8 ")\n", op_code );
 		auto const info = op_meta_tbl.at(op_code); // TODO: handle exception?
-		std::printf( "\e[0;1;33m%.4s\e[0m ", info.mnemonic ); // print instruction
+		std::printf( "\033[0;1;33m%.4s\033[0m ", info.mnemonic ); // print instruction
 		switch ( info.address_mode ) {
 			case implied:     std::printf(         " "         " "         "  "                " "           " "           " "         " "             ); break;
 			case accumulator: std::printf( REG_CLR " "         "A"         "  "                " "           " "           " "         " "             ); break;
@@ -1789,8 +1789,8 @@ public:
 	{
 		using namespace cpu;
 		
-		auto constexpr set    = "\e[1;32m1\e[0m";
-		auto constexpr unset  = "\e[1;31m0\e[0m";
+		auto constexpr set    = "\033[1;32m1\033[0m";
+		auto constexpr unset  = "\033[1;31m0\033[0m";
 		
 		assert( CPU );
 		
@@ -1903,7 +1903,7 @@ public:
 			auto const e    = system->get_history().peek(i);
 			std::printf( BORDER "│ " "\033[0;38m" "%04" PRIX16 "   ", e.addr );
 			system_t::print_asm( e.op, e.arg1, e.arg2 );
-			std::printf( "\e[0;90m ; %" PRIu8 " cycles " BORDER "│" "\033[B\033[%uG", e.cycles, x );
+			std::printf( "\033[0;90m ; %" PRIu8 " cycles " BORDER "│" "\033[B\033[%uG", e.cycles, x );
 		}
 		for ( u8 i=rows-entries_to_print; i; --i )
 			std::printf( BORDER "│                                │" "\033[B\033[%uG", x );
@@ -1976,12 +1976,12 @@ public:
 			for ( u8 col=0; col<0x10; ++col ) {
 				auto const curr_byte = RAM[curr_addr++];
 				if ( page_no == 1 ) // stack
-					std::printf( "\e[%sm", curr_addr <= stack_end? "1;97":"90" );
+					std::printf( "\033[%sm", curr_addr <= stack_end? "1;97":"90" );
 				else 
-					std::printf( "\e[1;%sm", curr_addr==CPU.PC? "1;40;93" : curr_byte? "32":"31" );
-				std::printf( "%02" PRIX8 "\e[0m%s", curr_byte, col==0xF?"":" " );
+					std::printf( "\033[1;%sm", curr_addr==CPU.PC? "1;40;93" : curr_byte? "32":"31" );
+				std::printf( "%02" PRIX8 "\033[0m%s", curr_byte, col==0xF?"":" " );
 			}
-			std::printf( "\e[0m│" GOTO_NEXT_LINE );
+			std::printf( "\033[0m│" GOTO_NEXT_LINE );
 		}
 		std::printf("╰─────┸───────────────────────────────────────────────╯");
 #		undef GOTO_NEXT_LINE
