@@ -176,219 +176,325 @@ namespace cpu {
 	};
 } // namespace cpu end
 
+
+struct history_data_t {
+	u16 addr=0x0000;
+	u8  op=0xEA, cycles=0, arg1=0, arg2=0;
+};
+
+struct history_stack_t {
+private:
+	history_data_t *_data     = nullptr;
+	u64             _capacity = 0;
+	u64             _size     = 0;
+	u16             _head     = 0;
+public:
+	history_stack_t( u64 const capacity ) noexcept:
+		_data     ( new history_data_t[capacity] ),
+		_capacity ( capacity )
+	{}
+	
+	~history_stack_t() noexcept {
+		delete[] _data;
+	}
+	
+	inline void
+	push( u16 const addr, u8 const op, u8 const cycles, u8 const arg1, u8 const arg2 ) noexcept
+	{
+		_data[_head] = { addr, op, cycles, arg1, arg2 };
+		_head        = (_head+1) % _capacity;
+		if ( _size < _capacity )
+			++_size;
+	}
+	
+	[[nodiscard]] inline auto
+	pop() noexcept -> history_data_t
+	{
+		assert( _size and "Can't pop() empty stack!" );
+		_head = (_capacity+_head-1) % _capacity;
+		--_size;
+		return _data[_head];
+	}
+	
+	[[nodiscard]] inline auto
+	peek( u64 const offset=0 ) const noexcept -> history_data_t
+	{
+		assert( offset < _size and "Trying to peek() out of bounds!" );
+		return _data[(_capacity+_head-offset-1) % _capacity];
+	}
+	
+	[[nodiscard]] inline auto
+	size() const noexcept -> u64
+	{
+		return _size;
+	}
+};
+
+enum address_mode_e: u8 {
+	implied,
+	accumulator,
+	immediate,
+	absolute,
+	absolute_x,
+	absolute_y,
+	zero_page,
+	zero_page_x,
+	zero_page_y,
+	indirect,
+	indirect_x,
+	indirect_y,
+	relative
+};
+
+struct op_info_t {
+	char const     *mnemonic;
+	address_mode_e  address_mode;
+};
+
+// TODO: replace with a ADS that isn't absolute shit
+const inline auto
+op_meta_tbl = std::unordered_map<u8,op_info_t>
+{
+//   key    ________value_________
+//   code  { mnemonic addressing  }
+	{ 0x00, { "BRK",   implied     } },
+	{ 0x01, { "ORA",   indirect_x  } },
+	{ 0x05, { "ORA",   zero_page   } },
+	{ 0x06, { "ASL",   zero_page   } },
+	{ 0x08, { "PHP",   implied     } },
+	{ 0x09, { "ORA",   immediate   } },
+	{ 0x0A, { "ASL",   accumulator } },
+	{ 0x0D, { "ORA",   absolute    } },
+	{ 0x0E, { "ASL",   absolute    } },
+	{ 0x10, { "BPL",   relative    } },
+	{ 0x11, { "ORA",   indirect_y  } },
+	{ 0x15, { "ORA",   zero_page_x } },
+	{ 0x16, { "ASL",   zero_page_x } },
+	{ 0x18, { "CLC",   implied     } },
+	{ 0x19, { "ORA",   absolute_y  } },
+	{ 0x1D, { "ORA",   absolute_x  } },
+	{ 0x1E, { "ASL",   absolute_x  } },
+	{ 0x20, { "JSR",   absolute    } },
+	{ 0x21, { "AND",   indirect_x  } },
+	{ 0x24, { "BIT",   zero_page   } },
+	{ 0x25, { "AND",   zero_page   } },
+	{ 0x26, { "ROL",   zero_page   } },
+	{ 0x28, { "PLP",   implied     } },
+	{ 0x29, { "AND",   immediate   } },
+	{ 0x2A, { "ROL",   accumulator } },
+	{ 0x2C, { "BIT",   absolute    } },
+	{ 0x2D, { "AND",   absolute    } },
+	{ 0x2E, { "ROL",   absolute    } },
+	{ 0x30, { "BMI",   relative    } },
+	{ 0x31, { "AND",   indirect_y  } },
+	{ 0x35, { "AND",   zero_page_x } },
+	{ 0x36, { "ROL",   zero_page_x } },
+	{ 0x38, { "SEC",   implied     } },
+	{ 0x39, { "AND",   absolute_y  } },
+	{ 0x3D, { "AND",   absolute_x  } },
+	{ 0x3E, { "ROL",   absolute_x  } },
+	{ 0x40, { "RTI",   implied     } },
+	{ 0x41, { "EOR",   indirect_x  } },
+	{ 0x45, { "EOR",   zero_page   } },
+	{ 0x46, { "LSR",   zero_page   } },
+	{ 0x48, { "PHA",   implied     } },
+	{ 0x49, { "EOR",   immediate   } },
+	{ 0x4A, { "LSR",   accumulator } },
+	{ 0x4C, { "JMP",   absolute    } },
+	{ 0x4D, { "EOR",   absolute    } },
+	{ 0x4E, { "LSR",   absolute    } },
+	{ 0x50, { "BVC",   relative    } },
+	{ 0x51, { "EOR",   indirect_y  } },
+	{ 0x55, { "EOR",   zero_page_x } },
+	{ 0x56, { "LSR",   zero_page_x } },
+	{ 0x58, { "CLI",   implied     } },
+	{ 0x59, { "EOR",   absolute_y  } },
+	{ 0x5D, { "EOR",   absolute_x  } },
+	{ 0x5E, { "LSR",   absolute_x  } },
+	{ 0x60, { "RTS",   implied     } },
+	{ 0x61, { "ADC",   indirect_x  } },
+	{ 0x65, { "ADC",   zero_page   } },
+	{ 0x66, { "ROR",   zero_page   } },
+	{ 0x68, { "PLA",   implied     } },
+	{ 0x69, { "ADC",   immediate   } },
+	{ 0x6A, { "ROR",   accumulator } },
+	{ 0x6C, { "JMP",   indirect    } },
+	{ 0x6D, { "ADC",   absolute    } },
+	{ 0x6E, { "ROR",   absolute    } },
+	{ 0x70, { "BVS",   relative    } },
+	{ 0x71, { "ADC",   indirect_y  } },
+	{ 0x75, { "ADC",   zero_page_x } },
+	{ 0x76, { "ROR",   zero_page_x } },
+	{ 0x78, { "SEI",   implied     } },
+	{ 0x79, { "ADC",   absolute_y  } },
+	{ 0x7D, { "ADC",   absolute_x  } },
+	{ 0x7E, { "ROR",   absolute_x  } },
+	{ 0x81, { "STA",   indirect_x  } },
+	{ 0x84, { "STY",   zero_page   } },
+	{ 0x85, { "STA",   zero_page   } },
+	{ 0x86, { "STX",   zero_page   } },
+	{ 0x88, { "DEY",   implied     } },
+	{ 0x8A, { "TXA",   implied     } },
+	{ 0x8C, { "STY",   absolute    } },
+	{ 0x8D, { "STA",   absolute    } },
+	{ 0x8E, { "STX",   absolute    } },
+	{ 0x90, { "BCC",   relative    } },
+	{ 0x91, { "STA",   indirect_y  } },
+	{ 0x94, { "STY",   zero_page_x } },
+	{ 0x95, { "STA",   zero_page_x } },
+	{ 0x96, { "STX",   zero_page_y } },
+	{ 0x98, { "TYA",   implied     } },
+	{ 0x99, { "STA",   absolute_y  } },
+	{ 0x9A, { "TXS",   implied     } },
+	{ 0x9D, { "STA",   absolute_x  } },
+	{ 0xA0, { "LDY",   immediate   } },
+	{ 0xA1, { "LDA",   indirect_x  } },
+	{ 0xA2, { "LDX",   immediate   } },
+	{ 0xA4, { "LDY",   zero_page   } },
+	{ 0xA5, { "LDA",   zero_page   } },
+	{ 0xA6, { "LDX",   zero_page   } },
+	{ 0xA8, { "TAY",   implied     } },
+	{ 0xA9, { "LDA",   immediate   } },
+	{ 0xAA, { "TAX",   implied     } },
+	{ 0xAC, { "LDY",   absolute    } },
+	{ 0xAD, { "LDA",   absolute    } },
+	{ 0xAE, { "LDX",   absolute    } },
+	{ 0xB0, { "BCS",   relative    } },
+	{ 0xB1, { "LDA",   indirect_y  } },
+	{ 0xB4, { "LDY",   zero_page_x } },
+	{ 0xB5, { "LDA",   zero_page_x } },
+	{ 0xB6, { "LDX",   zero_page_y } },
+	{ 0xB8, { "CLV",   implied     } },
+	{ 0xB9, { "LDA",   absolute_y  } },
+	{ 0xBA, { "TSX",   implied     } },
+	{ 0xBC, { "LDY",   absolute_x  } },
+	{ 0xBD, { "LDA",   absolute_x  } },
+	{ 0xBE, { "LDX",   absolute_y  } },
+	{ 0xC0, { "CPY",   immediate   } },
+	{ 0xC1, { "CMP",   indirect_x  } },
+	{ 0xC4, { "CPY",   zero_page   } },
+	{ 0xC5, { "CMP",   zero_page   } },
+	{ 0xC6, { "DEC",   zero_page   } },
+	{ 0xC8, { "INY",   implied     } },
+	{ 0xC9, { "CMP",   immediate   } },
+	{ 0xCA, { "DEX",   implied     } },
+	{ 0xCC, { "CPY",   absolute    } },
+	{ 0xCD, { "CMP",   absolute    } },
+	{ 0xCE, { "DEC",   absolute    } },
+	{ 0xD0, { "BNE",   relative    } },
+	{ 0xD1, { "CMP",   indirect_y  } },
+	{ 0xD5, { "CMP",   zero_page_x } },
+	{ 0xD6, { "DEC",   zero_page_x } },
+	{ 0xD8, { "CLD",   implied     } },
+	{ 0xD9, { "CMP",   absolute_y  } },
+	{ 0xDD, { "CMP",   absolute_x  } },
+	{ 0xDE, { "DEC",   absolute_x  } },
+	{ 0xE0, { "CPX",   immediate   } },
+	{ 0xE1, { "SBC",   indirect_x  } },
+	{ 0xE4, { "CPX",   zero_page   } },
+	{ 0xE5, { "SBC",   zero_page   } },
+	{ 0xE6, { "INC",   zero_page   } },
+	{ 0xE8, { "INX",   implied     } },
+	{ 0xE9, { "SBC",   immediate   } },
+	{ 0xEA, { "NOP",   implied     } },
+	{ 0xEC, { "CPX",   absolute    } },
+	{ 0xED, { "SBC",   absolute    } },
+	{ 0xEE, { "INC",   absolute    } },
+	{ 0xF0, { "BEQ",   relative    } },
+	{ 0xF1, { "SBC",   indirect_y  } },
+	{ 0xF5, { "SBC",   zero_page_x } },
+	{ 0xF6, { "INC",   zero_page_x } },
+	{ 0xF8, { "SED",   implied     } },
+	{ 0xF9, { "SBC",   absolute_y  } },
+	{ 0xFD, { "SBC",   absolute_x  } },
+	{ 0xFE, { "INC",   absolute_x  } }
+};
+
+
+
 struct system_t
 {
+private:
+	cpu::cpu_t        CPU     = {}; // MOS Technology 6502
+	u8               *RAM     = nullptr;
+	history_stack_t   history = { 128 };
 	
-	cpu::cpu_t CPU; // MOS Technology 6502
+public:
+	system_t() noexcept:
+		RAM( new u8[0x10000] )
+	{}
 	
-	//u8 RAM[ram_kb];
-	u8 RAM[0xFFFF+1];
+	[[nodiscard]] inline auto
+	get_cpu() noexcept -> cpu::cpu_t&
+	{
+		return CPU;
+	}
 	
-	struct history_data_t {
-		u16 addr=0x0000;
-		u8  op=0xEA, cycles=0, arg1=0, arg2=0;
-	};
+	[[nodiscard]] inline auto
+	get_ram() noexcept -> u8*
+	{
+		return RAM;
+	}
 	
-	static constexpr u64 history_capacity = 8192;
-	struct history_stack_t {
-	private:
-		history_data_t  _data[history_capacity];
-		u64             _size = 0;
-		u16             _head = 0;
-	public:
-		inline void
-		push( u16 const addr, u8 const op, u8 const cycles, u8 const arg1=0, u8 const arg2=0 ) noexcept
-		{
-			_data[_head] = { addr, op, cycles, arg1, arg2 };
-			_head        = (_head+1) % history_capacity;
-			if ( _size < history_capacity )
-				++_size;
+	[[nodiscard]] inline auto
+	get_history() noexcept -> history_stack_t&
+	{
+		return history;
+	}
+	
+	[[nodiscard]] inline auto
+	get_cpu() const noexcept -> cpu::cpu_t const&
+	{
+		return CPU;
+	}
+	
+	[[nodiscard]] inline auto
+	get_ram() const noexcept -> u8 const*
+	{
+		return RAM;
+	}
+	
+	[[nodiscard]] inline auto
+	get_history() const noexcept -> history_stack_t const&
+	{
+		return history;
+	}
+	
+	static inline void
+	print_asm( u8 const op_code,
+	           u8 const arg1=0,
+	           u8 const arg2=0 )
+	{
+#define SYM_CLR "\e[0;1;33m"
+#define IMM_CLR "\e[0;1;31m"
+#define ZPG_CLR "\e[0;1;37m"
+#define HEX_CLR "\e[0;1;93m"
+#define NUM_CLR "\e[0;1;97m"
+#define REG_CLR "\e[0;1;36m"
+		//std::fprintf( stderr, "at(op_code: %02" PRIX8 ")\n", op_code );
+		auto const info = op_meta_tbl.at(op_code); // TODO: handle exception?
+		std::printf( "\e[0;1;33m%.4s\e[0m ", info.mnemonic ); // print instruction
+		switch ( info.address_mode ) {
+			case implied:     std::printf(         " "         " "         "  "                " "           " "           " "         " "             ); break;
+			case accumulator: std::printf( REG_CLR " "         "A"         "  "                " "           " "           " "         " "             ); break;
+			case immediate:   std::printf( IMM_CLR "#" HEX_CLR "$" NUM_CLR "%02" PRIX8         " "           " "           " "         " ", arg1       ); break;
+			case absolute:    std::printf(         " " HEX_CLR "$" NUM_CLR "%02" PRIX8         "%02"         PRIX8         " "         " ", arg1, arg2 ); break;
+			case absolute_x:  std::printf(         " " HEX_CLR "$" NUM_CLR "%02" PRIX8         "%02"         PRIX8 SYM_CLR "," REG_CLR "X", arg1, arg2 ); break;
+			case absolute_y:  std::printf(         " " HEX_CLR "$" NUM_CLR "%02" PRIX8         "%02"         PRIX8 SYM_CLR "," REG_CLR "Y", arg1, arg2 ); break;
+			case zero_page:   std::printf( ZPG_CLR "*" HEX_CLR "$" NUM_CLR "%02" PRIX8         " "           " "           " "         " ", arg1       ); break;
+			case zero_page_x: std::printf( ZPG_CLR "*" HEX_CLR "$" NUM_CLR "%02" PRIX8 SYM_CLR ","   REG_CLR "X"           " "         " ", arg1       ); break;
+			case zero_page_y: std::printf( ZPG_CLR "*" HEX_CLR "$" NUM_CLR "%02" PRIX8 SYM_CLR ","   REG_CLR "Y"           " "         " ", arg1       ); break;
+			case indirect:    std::printf( SYM_CLR "(" HEX_CLR "$" NUM_CLR "%02" PRIX8         "%02"         PRIX8 SYM_CLR ")"         " ", arg1, arg2 ); break;
+			case indirect_x:  std::printf( SYM_CLR "(" HEX_CLR "$" NUM_CLR "%02" PRIX8 SYM_CLR ","   REG_CLR "X"   SYM_CLR ")"         " ", arg1       ); break;
+			case indirect_y:  std::printf( SYM_CLR "(" HEX_CLR "$" NUM_CLR "%02" PRIX8 SYM_CLR ")"           ","   REG_CLR "Y"         " ", arg1       ); break;
+			case relative:    std::printf(         " " HEX_CLR "$" NUM_CLR "%02" PRIX8         " "           " "           " "         " ", arg1       ); break;
 		}
-		
-		[[nodiscard]] inline auto
-		pop() noexcept -> history_data_t
-		{
-			assert( _size and "Can't pop() empty stack!" );
-			_head = (history_capacity+_head-1) % history_capacity;
-			--_size;
-			return _data[_head];
-		}
-		
-		[[nodiscard]] inline auto
-		peek( u64 const offset=0 ) const noexcept -> history_data_t
-		{
-			assert( offset < _size and "Trying to peek() out of bounds!" );
-			return _data[(history_capacity+_head-offset-1) % history_capacity];
-		}
-		
-		[[nodiscard]] inline auto
-		size() const noexcept -> u64
-		{
-			return _size;
-		}
-	} history;
-	
-	struct op_info_t {
-		char const format[64];
-		u8   const bytes;
-	};
-	
-	// TODO: replace with a ADS that isn't absolute shit
-	static const inline auto op_meta_tbl = std::unordered_map<u8,op_info_t> {
-	//   __key__  ____________value___
-	//   OP code { ASM format,  bytes }
-		{ 0x00,   { "BRK         ", 1     } },
-		{ 0x01,   { "ORA (bb,X)  ", 2     } },
-		{ 0x05,   { "ORA *ll     ", 2     } },
-		{ 0x06,   { "ASL *ll     ", 2     } },
-		{ 0x08,   { "PHP         ", 1     } },
-		{ 0x09,   { "ORA #bb     ", 2     } },
-		{ 0x0A,   { "ASL A       ", 1     } },
-		{ 0x0D,   { "ORA hhll    ", 3     } },
-		{ 0x0E,   { "ASL hhll    ", 3     } },
-		{ 0x10,   { "BPL bb      ", 2     } },
-		{ 0x11,   { "ORA (ll),Y  ", 2     } },
-		{ 0x15,   { "ORA *ll,X   ", 2     } },
-		{ 0x16,   { "ASL *ll,X   ", 2     } },
-		{ 0x18,   { "CLC         ", 1     } },
-		{ 0x19,   { "ORA hhll,Y  ", 3     } },
-		{ 0x1D,   { "ORA hhll,X  ", 3     } },
-		{ 0x1E,   { "ASL hhll,X  ", 3     } },
-		{ 0x20,   { "JSR hhll    ", 3     } },
-		{ 0x21,   { "AND (bb,X)  ", 2     } },
-		{ 0x24,   { "BIT *ll     ", 2     } },
-		{ 0x25,   { "AND *ll     ", 2     } },
-		{ 0x26,   { "ROL *ll     ", 2     } },
-		{ 0x28,   { "PLP         ", 1     } },
-		{ 0x29,   { "AND #bb     ", 2     } },
-		{ 0x2A,   { "ROL A       ", 1     } },
-		{ 0x2C,   { "BIT hhll    ", 3     } },
-		{ 0x2D,   { "AND hhll    ", 3     } },
-		{ 0x2E,   { "ROL hhll    ", 3     } },
-		{ 0x30,   { "BMI bb      ", 2     } },
-		{ 0x31,   { "AND (ll),Y  ", 2     } },
-		{ 0x35,   { "AND *ll,X   ", 2     } },
-		{ 0x36,   { "ROL *ll,X   ", 2     } },
-		{ 0x38,   { "SEC         ", 1     } },
-		{ 0x39,   { "AND hhll,Y  ", 3     } },
-		{ 0x3D,   { "AND hhll,X  ", 3     } },
-		{ 0x3E,   { "ROL hhll,X  ", 3     } },
-		{ 0x40,   { "RTI         ", 1     } },
-		{ 0x41,   { "EOR (bb,X)  ", 2     } },
-		{ 0x45,   { "EOR *ll     ", 2     } },
-		{ 0x46,   { "LSR *ll     ", 2     } },
-		{ 0x48,   { "PHA         ", 1     } },
-		{ 0x49,   { "EOR #bb     ", 2     } },
-		{ 0x4A,   { "LSR A       ", 1     } },
-		{ 0x4C,   { "JMP hhll    ", 3     } },
-		{ 0x4D,   { "EOR hhll    ", 3     } },
-		{ 0x4E,   { "LSR hhll    ", 3     } },
-		{ 0x50,   { "BVC bb      ", 2     } },
-		{ 0x51,   { "EOR (ll),Y  ", 2     } },
-		{ 0x55,   { "EOR *ll,X   ", 2     } },
-		{ 0x56,   { "LSR *ll,X   ", 2     } },
-		{ 0x58,   { "CLI         ", 1     } },
-		{ 0x59,   { "EOR hhll,Y  ", 3     } },
-		{ 0x5D,   { "EOR hhll,X  ", 3     } },
-		{ 0x5E,   { "LSR hhll,X  ", 3     } },
-		{ 0x60,   { "RTS         ", 1     } },
-		{ 0x61,   { "ADC (bb,X)  ", 2     } },
-		{ 0x65,   { "ADC *ll     ", 2     } },
-		{ 0x66,   { "ROR *ll     ", 2     } },
-		{ 0x68,   { "PLA         ", 1     } },
-		{ 0x69,   { "ADC #bb     ", 2     } },
-		{ 0x6A,   { "ROR A       ", 1     } },
-		{ 0x6C,   { "JMP ind     ", 2     } },
-		{ 0x6D,   { "ADC hhll    ", 3     } },
-		{ 0x6E,   { "ROR hhll    ", 3     } },
-		{ 0x70,   { "BVS bb      ", 2     } },
-		{ 0x71,   { "ADC (ll),Y  ", 2     } },
-		{ 0x75,   { "ADC *ll,X   ", 2     } },
-		{ 0x76,   { "ROR *ll,X   ", 2     } },
-		{ 0x78,   { "SEI         ", 1     } },
-		{ 0x79,   { "ADC hhll,Y  ", 3     } },
-		{ 0x7D,   { "ADC hhll,X  ", 3     } },
-		{ 0x7E,   { "ROR hhll,X  ", 3     } },
-		{ 0x81,   { "STA (bb,X)  ", 2     } },
-		{ 0x84,   { "STY *ll     ", 2     } },
-		{ 0x85,   { "STA *ll     ", 2     } },
-		{ 0x86,   { "STX *ll     ", 2     } },
-		{ 0x88,   { "DEY         ", 1     } },
-		{ 0x8A,   { "TXA         ", 1     } },
-		{ 0x8C,   { "STY hhll    ", 3     } },
-		{ 0x8D,   { "STA hhll    ", 3     } },
-		{ 0x8E,   { "STX hhll    ", 3     } },
-		{ 0x90,   { "BCC bb      ", 2     } },
-		{ 0x91,   { "STA (ll),Y  ", 2     } },
-		{ 0x94,   { "STY *ll,X   ", 2     } },
-		{ 0x95,   { "STA *ll,X   ", 2     } },
-		{ 0x96,   { "STX *ll,Y   ", 2     } },
-		{ 0x98,   { "TYA         ", 1     } },
-		{ 0x99,   { "STA hhll,Y  ", 3     } },
-		{ 0x9A,   { "TXS         ", 1     } },
-		{ 0x9D,   { "STA hhll,X  ", 3     } },
-		{ 0xA0,   { "LDY #bb     ", 2     } },
-		{ 0xA1,   { "LDA (bb,X)  ", 2     } },
-		{ 0xA2,   { "LDX #bb     ", 2     } },
-		{ 0xA4,   { "LDY *ll     ", 2     } },
-		{ 0xA5,   { "LDA *ll     ", 2     } },
-		{ 0xA6,   { "LDX *ll     ", 2     } },
-		{ 0xA8,   { "TAY         ", 1     } },
-		{ 0xA9,   { "LDA #bb     ", 2     } },
-		{ 0xAA,   { "TAX         ", 1     } },
-		{ 0xAC,   { "LDY hhll    ", 3     } },
-		{ 0xAD,   { "LDA hhll    ", 3     } },
-		{ 0xAE,   { "LDX hhll    ", 3     } },
-		{ 0xB0,   { "BCS bb      ", 2     } },
-		{ 0xB1,   { "LDA (ll),Y  ", 2     } },
-		{ 0xB4,   { "LDY *ll,X   ", 2     } },
-		{ 0xB5,   { "LDA *ll,X   ", 2     } },
-		{ 0xB6,   { "LDX *ll,Y   ", 2     } },
-		{ 0xB8,   { "CLV         ", 1     } },
-		{ 0xB9,   { "LDA hhll,Y  ", 2     } },
-		{ 0xBA,   { "TSX         ", 1     } },
-		{ 0xBC,   { "LDY hhll,X  ", 3     } },
-		{ 0xBD,   { "LDA hhll,X  ", 3     } },
-		{ 0xBE,   { "LDX hhll,Y  ", 3     } },
-		{ 0xC0,   { "CPY #bb     ", 2     } },
-		{ 0xC1,   { "CMP (bb,X)  ", 2     } },
-		{ 0xC4,   { "CPY *ll     ", 2     } },
-		{ 0xC5,   { "CMP *ll     ", 2     } },
-		{ 0xC6,   { "DEC *ll     ", 2     } },
-		{ 0xC8,   { "INY         ", 1     } },
-		{ 0xC9,   { "CMP #bb     ", 2     } },
-		{ 0xCA,   { "DEX         ", 1     } },
-		{ 0xCC,   { "CPY hhll    ", 3     } },
-		{ 0xCD,   { "CMP hhll    ", 3     } },
-		{ 0xCE,   { "DEC hhll    ", 3     } },
-		{ 0xD0,   { "BNE bb      ", 2     } },
-		{ 0xD1,   { "CMP (ll),Y  ", 2     } },
-		{ 0xD5,   { "CMP *ll,X   ", 2     } },
-		{ 0xD6,   { "DEC *ll,X   ", 2     } },
-		{ 0xD8,   { "CLD         ", 1     } },
-		{ 0xD9,   { "CMP hhll,Y  ", 3     } },
-		{ 0xDD,   { "CMP hhll,X  ", 3     } },
-		{ 0xDE,   { "DEC hhll,X  ", 3     } },
-		{ 0xE0,   { "CPX #bb     ", 2     } },
-		{ 0xE1,   { "SBC (bb,X)  ", 2     } },
-		{ 0xE4,   { "CPX *ll     ", 2     } },
-		{ 0xE5,   { "SBC *ll     ", 2     } },
-		{ 0xE6,   { "INC *ll     ", 2     } },
-		{ 0xE8,   { "INX         ", 1     } },
-		{ 0xE9,   { "SBC #bb     ", 2     } },
-		{ 0xEA,   { "NOP         ", 1     } },
-		{ 0xEC,   { "CPX hhll    ", 3     } },
-		{ 0xED,   { "SBC hhll    ", 3     } },
-		{ 0xEE,   { "INC hhll    ", 3     } },
-		{ 0xF0,   { "BEQ bb      ", 2     } },
-		{ 0xF1,   { "SBC (ll),Y  ", 2     } },
-		{ 0xF5,   { "SBC *ll,X   ", 2     } },
-		{ 0xF6,   { "INC *ll,X   ", 2     } },
-		{ 0xF8,   { "SED         ", 1     } },
-		{ 0xF9,   { "SBC hhll,Y  ", 3     } },
-		{ 0xFD,   { "SBC hhll,X  ", 3     } },
-		{ 0xFE,   { "INC hhll,X  ", 3     } }
-	};
+#undef SYM_CLR
+#undef IMM_CLR
+#undef ZPG_CLR
+#undef HEX_CLR
+#undef REG_CLR
+	}
 	
 	inline void
 	push( u8 const byte ) noexcept
@@ -653,11 +759,10 @@ struct system_t
 		
 		while (1) {
 			// TODO: fix cycle elapse pre OP side-effects instead of post
-			
-			u8 const instruction      = RAM[CPU.PC++];
-			u8 const instruction_size = op_meta_tbl.at(instruction).bytes;
-			u8 const arg1             = instruction_size < 2? 0x00 : RAM[CPU.PC  ];
-			u8 const arg2             = instruction_size < 3? 0x00 : RAM[CPU.PC+1];
+			u16 const addr        = CPU.PC;
+			u8  const instruction = RAM[CPU.PC++];
+			u8  const arg1        = RAM[CPU.PC  ];
+			u8  const arg2        = RAM[CPU.PC+1];
 			
 			switch (instruction)
 			{
@@ -1602,7 +1707,7 @@ struct system_t
 					INC( read_abs_x(dummy) ); // TODO: clean up
 				} break;
 			}
-			history.push( instruction, cycles, arg1, arg2 );
+			history.push( addr, instruction, cycles, arg1, arg2 );
 			do {
 				auto cycle_length_us = (int)(1000000.0f / CPU.Hz);
 				//usleep( cycle_length_us ); // TODO: find portable alternative
@@ -1788,18 +1893,21 @@ public:
 	{
 		assert( system );
 		
-		std::printf( "\033[?25l\033[%u;%uH", y, x ); 
+		std::printf( "\033[?25l\033[%u;%uH" BORDER "╭────────────────────────────────╮" "\033[B\033[%uG", y, x, x ); 
 		
-		u64 entries_to_print = system->history.size();
+		u8 entries_to_print = system->get_history().size();
 		if ( entries_to_print > rows )
 			entries_to_print = rows;
 		
-		for ( u64 i=0; i<entries_to_print; ++i ) {
-			auto const e = system->history.peek(i);
-			printf( "$%04" PRIX16 "   ", e.addr );
-			printf( system_t::op_meta_tbl.at(e.op).format, e.arg1, e.arg2 );
-			printf( "   ; %" PRIu8 " cycles" "\033[%u;%uH", y+i, x, e.cycles );
+		for ( u8 i=0; i<entries_to_print; ++i ) {
+			auto const e    = system->get_history().peek(i);
+			std::printf( BORDER "│ " "\033[0;38m" "%04" PRIX16 "   ", e.addr );
+			system_t::print_asm( e.op, e.arg1, e.arg2 );
+			std::printf( "\e[0;90m ; %" PRIu8 " cycles " BORDER "│" "\033[B\033[%uG", e.cycles, x );
 		}
+		for ( u8 i=rows-entries_to_print; i; --i )
+			std::printf( BORDER "│                                │" "\033[B\033[%uG", x );
+		std::printf( BORDER "╰────────────────────────────────╯" );
 // std::printf( "\033[999;0H" LABEL "Last OP: " BRT_CLR "%-18s\033[0m", system_t::op_meta_tbl.at(system->history.peek().op).format ); // TODO: refactor
 	}
 };
@@ -1838,7 +1946,7 @@ public:
 		const u16 page_base_addr = page_no * 0x100;
 		assert( system );
 		
-		std::printf( "\033[?25l\033[%u;%uH╭─────┰───────────────────────────────────────────────╮"
+		std::printf( "\033[?25l\033[%u;%uH" BORDER "╭─────┰───────────────────────────────────────────────╮"
 		             GOTO_NEXT_LINE "│" LABEL, y, x );
 		if      ( page_no == 0 )
 			std::printf( " ZPG " );
@@ -1859,16 +1967,18 @@ public:
 			BORDER "│" GOTO_NEXT_LINE
 			"┝━━━━━╋━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥" GOTO_NEXT_LINE
 		);
-		u16 const stack_end = 0x0100 + system->CPU.SP;
+		auto const &CPU = system->get_cpu();
+		auto const *RAM = system->get_ram();
+		u16  const stack_end = 0x0100 + CPU.SP;
 		u16 curr_addr = page_base_addr;
 		for ( u8 row=0; row<0x10; ++row ) {
-			std::printf( "│" DIM_CLR "%02" PRIX8 BRT_CLR "%1" PRIX8 DIM_CLR "0" BORDER " ┃", page_no, row );
+			std::printf( "│" "\033[0;38m" "%02" PRIX8 BRT_CLR "%1" PRIX8 DIM_CLR "0" BORDER " ┃", page_no, row );
 			for ( u8 col=0; col<0x10; ++col ) {
-				auto const curr_byte = system->RAM[curr_addr++];
+				auto const curr_byte = RAM[curr_addr++];
 				if ( page_no == 1 ) // stack
 					std::printf( "\e[%sm", curr_addr <= stack_end? "1;97":"90" );
 				else 
-					std::printf( "\e[1;%sm", curr_addr==system->CPU.PC? "1;40;93" : curr_byte? "32":"31" );
+					std::printf( "\e[1;%sm", curr_addr==CPU.PC? "1;40;93" : curr_byte? "32":"31" );
 				std::printf( "%02" PRIX8 "\e[0m%s", curr_byte, col==0xF?"":" " );
 			}
 			std::printf( "\e[0m│" GOTO_NEXT_LINE );
@@ -1884,25 +1994,32 @@ int
 main( int const argc, char const *const argv[] )
 {
 	auto system        = system_t {};
-	u8 *display_block  = system.RAM+0x0200;
+	u8 *display_block  = system.get_ram()+0x0200;
 	auto terminal      = terminal_display_t<80,25> { display_block, 2,1  };
 	//auto dbg_cpu_old = cpu_debug_15x10_display_t { &system.CPU, 124,0  };
-	auto dbg_cpu       = cpu_debug_82x4_display_t  { &system.CPU, 0,27 };
-	auto history       = history_t<16>             { &system, 0, 33 };
+	auto dbg_cpu       = cpu_debug_82x4_display_t  { &system.get_cpu(), 0,27 };
+	auto history       = history_t<48>             { &system, 0, 31 };
 	u8 constexpr pg_x=4, pg_y=4;
 	widget_i *widgets[pg_x * pg_y + 3] {};
 	
 	widgets[0] = (widget_i*)&terminal;
 	widgets[1] = (widget_i*)&dbg_cpu;
-	widgets[3] = (widget_i*)&history;
+	widgets[2] = (widget_i*)&history;
 	u8 pg_no = 0;
 	for ( u8 y=0; y<pg_y; ++y )
 		for ( u8 x=0; x<pg_x; ++x )
 			widgets[3 + y*pg_x+x] = new ram_page_hex_display_t { &system, pg_no++, u16(x*56U+85U), u16(y*20U+1U) };
 	
-	system.CPU.Hz = argc > 1? std::atoi(argv[1]) : 500;
+	system.get_cpu().Hz = argc > 1? std::atoi(argv[1]) : 500;
 	auto txt      = " xx Hello world!";
 	std::memcpy( (void*)display_block, txt, 16 );
+	
+	u8 prg1[] = {
+		0xEA, 0x4A, 0x09, 0x31, 0x0D, 0x20, 0x04, 0x1D,
+		0x32, 0x32, 0x19, 0x90, 0x16, 0x05, 0x12, 0x15,
+		0x69, 0x96, 0x42, 0x01, 0x33, 0x11, 0x24, 0x4C,
+		0x00, 0x03
+	};
 	
 	// Test program; kinda broken (TODO: fix)
 	u8 prg[] = {
@@ -1947,8 +2064,8 @@ main( int const argc, char const *const argv[] )
 /* 033A        RTS         */  0x60
 	};
 	
-	std::memcpy( (void*)(system.RAM+0x0300), prg, sizeof(prg) );
-	system.CPU.PC = 0x0300;
+	std::memcpy( (void*)(system.get_ram()+0x0300), prg, sizeof(prg) );
+	system.get_cpu().PC = 0x0300;
 	
 	auto cpu_thread = std::jthread(
 		[&system] {
