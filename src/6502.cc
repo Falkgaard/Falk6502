@@ -881,7 +881,6 @@ public:
 				CPU.set_flag( I, 1 );
 				push( CPU.PC );
 				push( CPU.P  );
-				while(1); // TODO: remove
 			} break; 
 			
 			// ORA ind,X
@@ -1931,6 +1930,16 @@ private:
 };
 
 
+// removes most unwanted ASCII-symbols (returns 0xFF character if encountered)
+[[nodiscard]] inline auto
+sanitize( u8 const c ) noexcept -> u8
+{
+	if ( c < 0x20 or c > 0x7E )
+		return 0xFF;
+	else return c;
+}
+
+
 
 template <u8 width, u8 height>
 struct terminal_display_t final: public widget_i
@@ -1959,17 +1968,29 @@ struct terminal_display_t final: public widget_i
 			init_ftr(ftr,width)
 		}; (void) all_initialized;
 		
-		constexpr u16 last_row_addr = (height-1) * width;
+		constexpr u16 last_row_addr = (height) * width;
 		
 		assert( block_start );
-		std::printf( "\033[?25l\033[%u;%uH" "%s" "\033[B\033[%uD", y, x, hdr, width+2 ); 
+		std::printf( "\033[?25l\033[%u;%uH" OUTER_BORDER "%s" "\033[B\033[%uD", y, x, hdr, width+2 ); 
 		for ( u16 row_addr_offset  = 0;
 		          row_addr_offset  < last_row_addr;
 		          row_addr_offset += width )
 		{
-			std::printf( "│%-*s│" "\033[B\033[%uD", width, block_start + row_addr_offset, width+2 );
+			std::printf( "│" );
+			bool is_end_met = false;
+			for ( u16 col=0; col<width; ++col ) {
+				u8 c = block_start[row_addr_offset+col]; // raw byte
+				if ( c == '\n' or c == '\0' ) 
+					is_end_met = true;
+				c = sanitize(c);
+				if ( c == 0xFF )
+					std::printf( "\033[1;31m" "?" "\033[0m" );
+				else
+					std::printf( "%c", is_end_met? ' ' : c );
+			}
+			std::printf( OUTER_BORDER "│" "\033[B\033[%uD", width+2 );
 		}
-		std::puts( ftr );
+		std::printf( OUTER_BORDER "%s", ftr );
 	}
 private:
 	u8 const *block_start = nullptr;
@@ -2106,7 +2127,6 @@ struct ram_page_hex_display_t final: public widget_i
 		else
 			std::printf( "pg%02" PRIX8, page_no );
 		
-		auto const &CPU = system->get_cpu();
 		auto const *RAM = system->get_ram();
 		
 		std::printf( INNER_BORDER "┃" );
@@ -2332,7 +2352,8 @@ struct keyboard_widget_t final: public widget_i
 	update() noexcept final
 	{
 		assert( port );
-		std::printf( "\033[?25l\033[%u;%uH" LABEL " Last keypress: " BRT_CLR "'%c'\033[0m", y, x, *port );
+		if ( *port )
+			std::printf( "\033[?25l\033[%u;%uH" LABEL " Last keypress: " BRT_CLR "'%c'\033[0m", y, x, *port );
 	}
 private:
 	u8 const *port = nullptr;
@@ -2348,15 +2369,15 @@ main( int const argc, char const *const argv[] )
 	auto  system        = system_t                  {};
 	u8   *keyboard_port = system.get_ram()+0xFF01;
 	u8   *display_block = system.get_ram()+0x1000;
-	auto  logger        = log_widget_t<8>           {                      87,  2 };
+	auto  logger        = log_widget_t<9>           {                      87,  2 };
 	logger.push( "Initializing..." );
 	logger.push( "Loading widgets... ");
 	auto  terminal      = terminal_display_t<80,25> { display_block,        3,  2 };
-	auto  dbg_cpu       = cpu_debug_82x4_display_t  { &system.get_cpu(),    2, 28 };
-	auto  history       = history_log_t<18>         { &system,              2, 32 };
-	auto  stk_display   = stack_hex_display_t       { &system,             87, 32 };
-	auto  zpg_display   = ram_page_hex_display_t    { &system, 0x00,       87, 12 };
-	auto  prg_display   = program_hex_display_t     { &system,             32, 32 };
+	auto  dbg_cpu       = cpu_debug_82x4_display_t  { &system.get_cpu(),    2, 29 };
+	auto  history       = history_log_t<18>         { &system,              2, 33 };
+	auto  stk_display   = stack_hex_display_t       { &system,             87, 33 };
+	auto  zpg_display   = ram_page_hex_display_t    { &system, 0x00,       87, 13 };
+	auto  prg_display   = program_hex_display_t     { &system,             32, 33 };
 	auto  keyboard_w    = keyboard_widget_t         { keyboard_port,        0,  0 };
 	auto  keyboard      = keyboard_t                { keyboard_port, &is_running, &is_stepping, &should_step };
 	
@@ -2374,14 +2395,12 @@ main( int const argc, char const *const argv[] )
 		&logger,
 		&keyboard_w
 	};
-	
-	auto txt = " xx Hello world!"; // TODO: remove
-	std::memcpy( (void*)display_block, txt, 16 );
-	
+		
 	logger.push( "Loading program machine code..." );
-	u16 prg_start_addr = argc > 2? std::atoi(argv[2]) : 0x0300; // TODO: refactor into optional PPM define
 	
 	if ( argc > 1 ) {
+		u16 prg_start_addr = argc > 2? std::atoi(argv[2]) : 0x0300; // TODO: refactor into optional PPM define
+		
 		std::printf( "Trying to open '%s' @ 0x%04" PRIX16 "...\n", argv[1], prg_start_addr );
 		auto *f = std::fopen( argv[1], "rb" );
 		if ( not f ) {
@@ -2401,7 +2420,6 @@ main( int const argc, char const *const argv[] )
 		char msg[256];
 		std::sprintf( msg, "Loaded '%s' into $%04" PRIX16, argv[1], prg_start_addr );
 		logger.push( msg );
-		system.get_cpu().PC = *(u16*)(system.get_ram() + 0xFFFC);
 	}
 	else {
 		/*
@@ -2448,15 +2466,48 @@ main( int const argc, char const *const argv[] )
 	/* 032A        LSR A       */  0x4A,
 	/* 032B        LSR A       */  0x4A,
 	/* 032C        ADC #$30    */  0x69, 0x30,
-	/* 032E        STA $0201   */  0x8D, 0x01, 0x02,
+	/* 032E        STA $1001   */  0x8D, 0x01, 0x10,
 	/* 0331        LDA *$00    */  0xA5, 0x00,
 	/* 0333        AND #$0F    */  0x29, 0x0F,
 	/* 0335        ADC #$30    */  0x69, 0x30,
-	/* 0337        STA $0202   */  0x8D, 0x02, 0x02,
+	/* 0337        STA $1002   */  0x8D, 0x02, 0x10,
 	/* 033A        RTS         */  0x60
 		};
+		u16 prg_start_addr = 0x0300; // TODO: refactor into optional PPM define
+			
+		u8 const txt[2048] = " xx Hello world!                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                                "
+		                     "                                                                             123"
+		                     "                                                                             xyz";
+		std::memcpy( (void*)display_block, txt, sizeof(txt) );
+		
 		std::memcpy( (void*)(system.get_ram()+prg_start_addr), prg, sizeof(prg) );
+		*(u16*)(system.get_ram() + 0xFFFC) = prg_start_addr;
 	}
+	
+	system.get_cpu().PC = *(u16*)(system.get_ram() + 0xFFFC);
+	
 	auto  app           = tui_app_t                 {};
 	
 	logger.push( "Starting IO thread" );
