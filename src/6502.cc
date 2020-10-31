@@ -85,9 +85,15 @@ struct keyboard_t {
 		// terminate when "x" is pressed
 		if ( *port == 'x' )
 			*is_running_ptr = false;
+		else if ( *port == 's' )
+			*is_stepping_ptr = not *is_stepping_ptr; // flip
+		else if ( *is_stepping_ptr and *port == 'n' )
+			*should_step_ptr = true;
 	}
-	u8   *port           = nullptr;
-	bool *is_running_ptr = nullptr;
+	u8   *port            = nullptr;
+	bool *is_running_ptr  = nullptr;
+	bool *is_stepping_ptr = nullptr;
+	bool *should_step_ptr = nullptr;
 };
 
 // TODO: clean these two temporary hacks up
@@ -2105,7 +2111,7 @@ struct ram_page_hex_display_t final: public widget_i
 		
 		std::printf( INNER_BORDER "┃" );
 		for ( u8 col=0; col<0x10; ++col )
-			std::printf( DIM_CLR "0"  "%s%" PRIX8 "%s", (page_base_addr+col == (CPU.PC&0xFF0F)? LABEL : BRT_CLR), col, (col==0xF? "":" ") );
+			std::printf( DIM_CLR "0" BRT_CLR "%" PRIX8 "%s", col, (col==0xF? "":" ") );
 		std::printf( OUTER_BORDER "│" GOTO_NEXT_LINE "┝" INNER_BORDER "━━━━╋━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" OUTER_BORDER "┥" GOTO_NEXT_LINE );
 		u16 curr_addr = page_base_addr;
 		for ( u8 row=0; row<0x10; ++row ) {
@@ -2113,7 +2119,7 @@ struct ram_page_hex_display_t final: public widget_i
 			             page_no, BRT_CLR, row );
 			for ( u8 col=0; col<0x10; ++col, ++curr_addr ) {
 				auto const curr_byte = RAM[curr_addr];
-				std::printf( "\033[1;%sm", curr_addr==CPU.PC? "1;93" : curr_byte? "1;97":"90" );
+				std::printf( "\033[1;%sm", curr_byte? "1;97":"90" );
 				std::printf( "%02" PRIX8 "%s", curr_byte, col==0xF?"":" " );
 			}
 			std::printf( OUTER_BORDER "│" GOTO_NEXT_LINE );
@@ -2337,10 +2343,11 @@ int
 main( int const argc, char const *const argv[] )
 {
 	bool  is_running    = true;
+	bool  is_stepping   = true;
+	bool  should_step   = false;
 	auto  system        = system_t                  {};
-	u8   *keyboard_port = system.get_ram()+0x02005;
-	u8   *display_block = system.get_ram()+0x0200;
-	auto  app           = tui_app_t                 {};
+	u8   *keyboard_port = system.get_ram()+0xFF01;
+	u8   *display_block = system.get_ram()+0x1000;
 	auto  logger        = log_widget_t<8>           {                      87,  2 };
 	logger.push( "Initializing..." );
 	logger.push( "Loading widgets... ");
@@ -2351,9 +2358,11 @@ main( int const argc, char const *const argv[] )
 	auto  zpg_display   = ram_page_hex_display_t    { &system, 0x00,       87, 12 };
 	auto  prg_display   = program_hex_display_t     { &system,             32, 32 };
 	auto  keyboard_w    = keyboard_widget_t         { keyboard_port,        0,  0 };
-	auto  keyboard      = keyboard_t                { keyboard_port,  &is_running };
-
+	auto  keyboard      = keyboard_t                { keyboard_port, &is_running, &is_stepping, &should_step };
+	
 	logger.push( "Widgets loaded!" );
+	
+	system.get_cpu().Hz = argc > 3? std::atoi(argv[3]) : 500;
 	
 	widget_i *widgets[] {
 		&terminal,
@@ -2366,64 +2375,89 @@ main( int const argc, char const *const argv[] )
 		&keyboard_w
 	};
 	
-	system.get_cpu().Hz = argc > 1? std::atoi(argv[1]) : 500;
-	auto txt      = " xx Hello world!";
+	auto txt = " xx Hello world!"; // TODO: remove
 	std::memcpy( (void*)display_block, txt, 16 );
 	
-	logger.push( "Loading program machine code" );
+	logger.push( "Loading program machine code..." );
+	u16 prg_start_addr = argc > 2? std::atoi(argv[2]) : 0x0300; // TODO: refactor into optional PPM define
 	
-	u8 prg1[] = {
-		0xEA, 0x4A, 0x09, 0x31, 0x0D, 0x20, 0x04, 0x1D,
-		0x32, 0x32, 0x19, 0x90, 0x16, 0x05, 0x12, 0x15,
-		0x69, 0x96, 0x42, 0x01, 0x33, 0x11, 0x24, 0x4C,
-		0x00, 0x03
-	};
-	
-	// Test program; kinda broken (TODO: fix)
-	u8 prg[] = {
-/* 0300 MAIN   LDX #$00    */  0xA2, 0x00,
-/* 0302 LOOP1  LDY #$00    */  0xA0, 0x00,
-/* 0304 LOOP2  TXA         */  0x8A,
-/* 0305        PHA         */  0x48,
-/* 0306        TYA         */  0x98,
-/* 0307        PHA         */  0x48,
-/* 0308        JSR PRINT   */  0x20, 0x1F, 0x03,
-/* 030B        PLA         */  0x68,
-/* 030C        TAY         */  0xA8,
-/* 030D        PLA         */  0x68,
-/* 030E        TAX         */  0xAA,
-/* 030F        INY         */  0xC8,
-/* 0310        TYA         */  0x98,
-/* 0311        SBC #$0A    */  0xE9, 0x0A,
-/* 0313        BNE LOOP2   */  0xD0, 0xEF,
-/* 0315        INX         */  0xE8,
-/* 0316        TXA         */  0x8A,
-/* 0317        SBC #$0A    */  0xE9, 0x0A,
-/* 0319        BNE LOOP1   */  0xD0, 0xE7,
-/* 031B END    NOP         */  0xEA,
-/* 031C        JMP END     */  0x4C, 0x1B, 0x03,
-/*-------------------------*/  
-/* 031F PRINT  STY *$00    */  0x84, 0x00,
-/* 0321        TXA         */  0x8A,
-/* 0322        SED         */  0xF8,
-/* 0323        ADC *$00    */  0x65, 0x00,
-/* 0325        CLD         */  0xD8,
-/* 0326        STA *$00    */  0x85, 0x00,
-/* 0328        LSR A       */  0x4A,
-/* 0329        LSR A       */  0x4A,
-/* 032A        LSR A       */  0x4A,
-/* 032B        LSR A       */  0x4A,
-/* 032C        ADC #$30    */  0x69, 0x30,
-/* 032E        STA $0201   */  0x8D, 0x01, 0x02,
-/* 0331        LDA *$00    */  0xA5, 0x00,
-/* 0333        AND #$0F    */  0x29, 0x0F,
-/* 0335        ADC #$30    */  0x69, 0x30,
-/* 0337        STA $0202   */  0x8D, 0x02, 0x02,
-/* 033A        RTS         */  0x60
-	}; (void) prg1;
-	
-	std::memcpy( (void*)(system.get_ram()+0x0300), prg, sizeof(prg) );
-	system.get_cpu().PC = 0x0300;
+	if ( argc > 1 ) {
+		std::printf( "Trying to open '%s' @ 0x%04" PRIX16 "...\n", argv[1], prg_start_addr );
+		auto *f = std::fopen( argv[1], "rb" );
+		if ( not f ) {
+			std::fprintf( stderr, "[ERROR]: Unable to open file \"%s\"!", argv[1] );
+			return -1;
+		}
+		
+		std::fseek( f, 0L, SEEK_END );
+		std::size_t size = std::ftell(f) - 1; // TODO: verify ...
+		std::fseek( f, 0L, SEEK_SET );
+		if ( size + prg_start_addr > 0xFFFF ) {
+			std::fprintf( stderr, "[ERROR]: Reading binary data at \"%s\" into RAM starting at address"
+			              "$%04" PRIX16 "would exceed RAM capacity!", argv[1], prg_start_addr );
+			return -2;
+		}
+		std::fread( system.get_ram()+prg_start_addr, size, 1, f );
+		char msg[256];
+		std::sprintf( msg, "Loaded '%s' into $%04" PRIX16, argv[1], prg_start_addr );
+		logger.push( msg );
+		system.get_cpu().PC = *(u16*)(system.get_ram() + 0xFFFC);
+	}
+	else {
+		/*
+		u8 prg[] = {
+			0xEA, 0x4A, 0x09, 0x31, 0x0D, 0x20, 0x04, 0x1D,
+			0x32, 0x32, 0x19, 0x90, 0x16, 0x05, 0x12, 0x15,
+			0x69, 0x96, 0x42, 0x01, 0x33, 0x11, 0x24, 0x4C,
+			0x00, 0x03
+		};
+		*/
+		
+		// Test program; kinda broken (TODO: fix)
+		u8 prg[] = {
+	/* 0300 MAIN   LDX #$00    */  0xA2, 0x00,
+	/* 0302 LOOP1  LDY #$00    */  0xA0, 0x00,
+	/* 0304 LOOP2  TXA         */  0x8A,
+	/* 0305        PHA         */  0x48,
+	/* 0306        TYA         */  0x98,
+	/* 0307        PHA         */  0x48,
+	/* 0308        JSR PRINT   */  0x20, 0x1F, 0x03,
+	/* 030B        PLA         */  0x68,
+	/* 030C        TAY         */  0xA8,
+	/* 030D        PLA         */  0x68,
+	/* 030E        TAX         */  0xAA,
+	/* 030F        INY         */  0xC8,
+	/* 0310        TYA         */  0x98,
+	/* 0311        SBC #$0A    */  0xE9, 0x0A,
+	/* 0313        BNE LOOP2   */  0xD0, 0xEF,
+	/* 0315        INX         */  0xE8,
+	/* 0316        TXA         */  0x8A,
+	/* 0317        SBC #$0A    */  0xE9, 0x0A,
+	/* 0319        BNE LOOP1   */  0xD0, 0xE7,
+	/* 031B END    NOP         */  0xEA,
+	/* 031C        JMP END     */  0x4C, 0x1B, 0x03,
+	/*-------------------------*/  
+	/* 031F PRINT  STY *$00    */  0x84, 0x00,
+	/* 0321        TXA         */  0x8A,
+	/* 0322        SED         */  0xF8,
+	/* 0323        ADC *$00    */  0x65, 0x00,
+	/* 0325        CLD         */  0xD8,
+	/* 0326        STA *$00    */  0x85, 0x00,
+	/* 0328        LSR A       */  0x4A,
+	/* 0329        LSR A       */  0x4A,
+	/* 032A        LSR A       */  0x4A,
+	/* 032B        LSR A       */  0x4A,
+	/* 032C        ADC #$30    */  0x69, 0x30,
+	/* 032E        STA $0201   */  0x8D, 0x01, 0x02,
+	/* 0331        LDA *$00    */  0xA5, 0x00,
+	/* 0333        AND #$0F    */  0x29, 0x0F,
+	/* 0335        ADC #$30    */  0x69, 0x30,
+	/* 0337        STA $0202   */  0x8D, 0x02, 0x02,
+	/* 033A        RTS         */  0x60
+		};
+		std::memcpy( (void*)(system.get_ram()+prg_start_addr), prg, sizeof(prg) );
+	}
+	auto  app           = tui_app_t                 {};
 	
 	logger.push( "Starting IO thread" );
 	auto io_thread = std::jthread(
@@ -2437,14 +2471,19 @@ main( int const argc, char const *const argv[] )
 	
 	logger.push( "Starting 6502 simulation thread" );
 	auto cpu_thread = std::jthread(
-		[&is_running,&system] {
+		[&is_running,&is_stepping,&should_step,&system] {
 			while ( is_running )
-				system.update();
+				if ( not is_stepping )
+					system.update();
+				else if ( should_step ) {
+					system.update();
+					should_step = false;
+				}
 		}
 	);
 	
 	logger.push( "Starting TUI thread" );
-	auto const target_framerate = (argc>2? std::atoi(argv[2]) : 30);
+	auto const target_framerate = (argc>4? std::atoi(argv[4]) : 30);
 	auto const frame_length_ms  = 1000ms / target_framerate;
 	auto gui_thread = std::jthread(
 		[&is_running, &widgets, &frame_length_ms] {
