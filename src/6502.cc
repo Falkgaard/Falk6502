@@ -43,6 +43,7 @@ using namespace::std::literals;
 #define OUTER_BORDER  "\033[0;1;97m"
 #define INNER_BORDER  "\033[1;97m"
 #define DIM_CLR       "\033[90m"
+#define MED_CLR       "\033[38;5;248m"
 #define BRT_CLR       "\033[97m"
 
 using u8  = std::uint8_t;
@@ -63,6 +64,28 @@ using f32 = float;
 // TODO: do more testing	
 // TODO: handle under/overflow in stack?
 // TODO: keep track of last written + clear later
+// TODO: nav mode:
+//           if nav_mode:
+//               if left: (A,H,←,4)
+//                   prev_widget = curr_widget
+//                   switch ( curr_widget ):
+//                       case    term:  curr_widget = logger
+//                       case hexedit:  curr_widget = term
+//                       case  logger:  curr_widget = hexedit
+//           
+//               if right: (D,L,→,6)
+//                   prev_widget = curr_widget
+//                   switch ( curr_widget ):
+//                       case    term:  curr_widget = hexedit
+//                       case hexedit:  curr_widget = logger
+//                       case  logger:  curr_widget = term
+//                       
+//               if up|down: (S,J,↓,2, W,K,↑,8)
+//                   if curr_widget == history:
+//                       curr_widget = prev_widget
+//                   else:
+//                       prev_widget = curr_widget
+//                       curr_widget = history
 
 [[nodiscard]] inline auto
 timer() noexcept -> f32
@@ -1908,14 +1931,14 @@ struct cpu_debug_82x4_display_t final: public widget_i
 			++cc_digits;
 		
 		std::printf( "\033[?25l\033[%u;%uH", y, x ); 
-		std::printf( 
+		std::printf( OUTER_BORDER
 			"╭────┰────────────────┰──────┰────┰────┰────┰────┰──────────┰──────────────────────╮"  "\033[B\033[84D"
-			"│ " LABEL "F:" OUTER_BORDER " ┃ " LABEL "N V BB D I Z C" OUTER_BORDER " ┃ " LABEL "PC:" OUTER_BORDER
-			"  ┃ " LABEL "S:" OUTER_BORDER " ┃ " LABEL "A:" OUTER_BORDER " ┃ " LABEL "X:" OUTER_BORDER " ┃ " LABEL "Y:" OUTER_BORDER
-			" ┃ " LABEL "Clk.Spd:" OUTER_BORDER " ┃ " LABEL "Elapsed Cycle Count:" OUTER_BORDER " │"  "\033[B\033[84D"
-			"│ " BRT_CLR "%02" PRIX8 OUTER_BORDER " ┃ %s %s %s%s %s %s %s %s ┃ " BRT_CLR "%04" PRIX16 OUTER_BORDER " ┃ "
-			BRT_CLR "%02" PRIX8 OUTER_BORDER " ┃ " BRT_CLR "%02" PRIX8 OUTER_BORDER
-			" ┃ " BRT_CLR "%02" PRIX8 OUTER_BORDER " ┃ " BRT_CLR "%02" PRIX8 OUTER_BORDER " ┃ " BRT_CLR "%5" PRIu16 OUTER_BORDER " Hz" 
+			"│ " LABEL "F:" INNER_BORDER " ┃ " LABEL "N V BB D I Z C" INNER_BORDER " ┃ " LABEL "PC:" INNER_BORDER
+			"  ┃ " LABEL "S:" INNER_BORDER " ┃ " LABEL "A:" INNER_BORDER " ┃ " LABEL "X:" INNER_BORDER " ┃ " LABEL "Y:" INNER_BORDER
+			" ┃ " LABEL "Clk.Spd:" INNER_BORDER " ┃ " LABEL "Elapsed Cycle Count:" OUTER_BORDER " │"  "\033[B\033[84D"
+			"│ " BRT_CLR "%02" PRIX8 INNER_BORDER " ┃ %s %s %s%s %s %s %s %s ┃ " BRT_CLR "%04" PRIX16 INNER_BORDER " ┃ "
+			BRT_CLR "%02" PRIX8 INNER_BORDER " ┃ " BRT_CLR "%02" PRIX8 INNER_BORDER
+			" ┃ " BRT_CLR "%02" PRIX8 INNER_BORDER " ┃ " BRT_CLR "%02" PRIX8 INNER_BORDER " ┃ " BRT_CLR "%5" PRIu16 INNER_BORDER " Hz" 
 			" ┃ " DIM_CLR "%0*d" BRT_CLR "%" PRIu64 OUTER_BORDER " │"                   "\033[B\033[84D"
 			"╰────┸────────────────┸──────┸────┸────┸────┸────┸──────────┸──────────────────────╯",
 			CPU->P,
@@ -1932,13 +1955,12 @@ private:
 
 // removes most unwanted ASCII-symbols (returns 0xFF character if encountered)
 [[nodiscard]] inline auto
-sanitize( u8 const c ) noexcept -> u8
+is_presentable_symbol( u8 const c ) noexcept -> bool
 {
-	if ( c < 0x20 or c > 0x7E )
-		return 0xFF;
-	else return c;
+	return c > 0x1F and c < 0x7F;
 }
 
+constexpr char unpresentable_symbol[] = "\033[1;31m?";
 
 
 template <u8 width, u8 height>
@@ -1982,9 +2004,8 @@ struct terminal_display_t final: public widget_i
 				u8 c = block_start[row_addr_offset+col]; // raw byte
 				if ( c == '\n' or c == '\0' ) 
 					is_end_met = true;
-				c = sanitize(c);
-				if ( c == 0xFF )
-					std::printf( "\033[1;31m" "?" "\033[0m" );
+				if ( not is_presentable_symbol(c) )
+					std::printf( unpresentable_symbol );
 				else
 					std::printf( "%c", is_end_met? ' ' : c );
 			}
@@ -2183,7 +2204,7 @@ struct program_hex_display_t final: public widget_i
 		u16  const  page_no = PC >> 8;
 		
 		std::printf( "\033[?25l\033[%u;%uH" OUTER_BORDER "╭────┰───────────────────────────────────────────────╮"
-		             GOTO_NEXT_LINE "│" LABEL "Pg" BRT_CLR "%02" PRIX8, y, x, page_no );
+		             GOTO_NEXT_LINE "│" LABEL "p." "%02" PRIX8, y, x, page_no );
 		
 		std::printf( INNER_BORDER "┃" );
 		for ( u8 col=0; col<0x10; ++col ) {
@@ -2224,6 +2245,7 @@ struct program_hex_display_t final: public widget_i
 			std::printf( OUTER_BORDER "│" GOTO_NEXT_LINE );
 		}
 		std::printf("╰────┸───────────────────────────────────────────────╯");
+#		undef CROSS_CLR
 #		undef GOTO_NEXT_LINE
 	}
 private:
@@ -2285,7 +2307,7 @@ private:
 
 using log_stack_t = cyclic_stack_t<log_entry_t>;
 
-template <u8 rows>
+template <u8 rows, u8 width>
 struct log_widget_t final: public widget_i
 {
 	log_widget_t () noexcept = default;
@@ -2310,27 +2332,128 @@ struct log_widget_t final: public widget_i
 	void
 	update() noexcept final
 	{
-		std::printf( "\033[?25l\033[%u;%uH"
-			             OUTER_BORDER "╭────────────────────────────────────────────────────╮" "\033[B\033[%uG", y, x, x ); 
-			
+		// TODO: add support for line break if message is too long for the width
+		static char hdr[3*(width+2)+1],
+		            ftr[3*(width+2)+1];
+		
+		static bool all_initialized = {
+			init_hdr(hdr,width) and
+			init_ftr(ftr,width)
+		}; (void) all_initialized;
+		
+		std::printf( "\033[?25l\033[%u;%uH" OUTER_BORDER "%s" "\033[B\033[%uG", y, x, hdr, x ); 
+		
 		u8 entries_to_print = entries.size();
 		if ( entries_to_print > rows )
 			entries_to_print = rows;
 		
 		for ( u8 i=0; i<entries_to_print; ++i ) {
 			auto const &e = entries.peek(i);
-			std::printf( OUTER_BORDER "│ \033[1;33m%s" " \033[37m%-.39s", e.timestamp(), e.msg() );
-			std::printf( "\033[%uG" OUTER_BORDER " │" "\033[B\033[%uG", x+52, x );
+			std::printf( OUTER_BORDER "│\033[1;33m%s" " \033[37m%-.*s", e.timestamp(), width-9, e.msg() );
+			std::printf( "\033[%uG" OUTER_BORDER "│" "\033[B\033[%uG", x+width+1, x );
 		}
 		
 		for ( u8 i=rows-entries_to_print; i; --i )
-			std::printf( OUTER_BORDER "│                                                    │" "\033[B\033[%uG", x );
-		std::printf(    OUTER_BORDER "╰────────────────────────────────────────────────────╯" );
+			std::printf( OUTER_BORDER "│" "\033[%uC" "│" "\033[B\033[%uG", width, x );
+		std::printf( OUTER_BORDER "%s", ftr );
 	}
 	
 private:
 	log_stack_t entries;
 	u16         x=0, y=0;
+};
+
+template <u8 rows>
+struct mem_edit_widget_t final: public widget_i
+{
+	mem_edit_widget_t () noexcept = default;
+	
+	mem_edit_widget_t ( system_t *system, u16 x, u16 y ) noexcept:
+		widget_i(), system(system), x(x), y(y)
+	{}
+	
+	~mem_edit_widget_t () noexcept final = default;
+	
+	void
+	redraw() noexcept final
+	{
+	}
+	
+	void
+	update() noexcept final
+	{
+#		define CROSS_CLR        "\033[48;5;237m"
+#		define GOTO_NEXT_LINE   "\033[B\033[71D" 
+		bool widget_is_active = true;
+		assert( system );
+		auto const *RAM = system->get_ram();
+		// top_marginal, btm_marginal
+		// side movement... wrap? next line? block?
+		// mode... hex? ascii?
+		// confirm edit?
+		u8 curr_col = curr_addr & 0xF;
+		std::printf(    "\033[?25l\033[%u;%uH" OUTER_BORDER, y, x );
+		std::printf(    "╭────┰───────────────────────────────────────────────┰────────────────╮"  GOTO_NEXT_LINE 
+		                "│" LABEL " HEX" INNER_BORDER "┃");
+		for ( u8 col=0; col<=0xF; ++col )
+			std::printf( "%s" DIM_CLR "0" "%s" "%01" PRIX8 "\033[0m" "%s", (widget_is_active and col==curr_col? CROSS_CLR : ""), (widget_is_active and col==curr_col? LABEL : BRT_CLR), col, (col==0xF? "":" ") );
+		std::printf( INNER_BORDER "┃" );
+		for ( u8 col=0; col<=0xF; ++col )
+			std::printf( "%s" "%s" "%01" PRIX8 "\033[0m", (widget_is_active and col==curr_col? CROSS_CLR:""), (widget_is_active and col==curr_col? LABEL : BRT_CLR), col );
+		std::printf( OUTER_BORDER "│" GOTO_NEXT_LINE "┝" INNER_BORDER "━━━━╋" );
+		for ( u8 col=0; col<=0xF; ++col )
+			std::printf( "%s" "━━" "\033[0m" INNER_BORDER "%s", (widget_is_active and col==curr_col? CROSS_CLR : ""), (col<0xF? "━":"╋") );
+		for ( u8 col=0; col<=0xF; ++col )
+			std::printf( "%s" "━" "\033[0m" INNER_BORDER, (widget_is_active and col==curr_col? CROSS_CLR : "") );
+		std::printf( OUTER_BORDER "┥"  GOTO_NEXT_LINE );
+		for ( u16 row=0; row<rows; ++row ) {
+			u16  const curr_row_addr = (top_row << 8) + (row << 4 );
+			bool const is_active_row = (curr_addr&0xFFF0) == curr_row_addr;
+			std::printf( OUTER_BORDER "│" "%s" "%03" PRIX16 DIM_CLR "0" INNER_BORDER "┃", (is_active_row? CROSS_CLR LABEL : BRT_CLR), (curr_row_addr>>4) );
+			// hex:
+			for ( u8 col=0; col<=0xF; ++col ) {
+				u8   const curr_byte = RAM[curr_row_addr+col];
+				bool const is_active_col = col == (curr_addr&0xF);
+				if ( is_active_row )
+					std::printf( "%s" "%02" PRIX8 "%s", (is_active_col? LABEL : MED_CLR), curr_byte, col==0xF?"":" " );
+				else
+					std::printf( "%s" "%02" PRIX8 "\033[0m%s", (is_active_col? CROSS_CLR MED_CLR : DIM_CLR), curr_byte, col==0xF?"":" " );
+			}
+			std::printf( INNER_BORDER "┃" );
+			// ascii:
+			for ( u8 col=0; col<=0xF; ++col ) {
+				u8   const curr_byte      = RAM[curr_row_addr+col];
+				u8   const is_presentable = is_presentable_symbol(curr_byte);
+				bool const is_active_col  = col == (curr_addr&0xF);
+				if ( is_active_row ) {
+					if ( is_presentable )
+						std::printf( "%s" "%c", (is_active_col? LABEL : MED_CLR), curr_byte );
+					else
+						std::printf( "%s", unpresentable_symbol );
+				}
+				else {
+					if ( is_active_col )
+						std::printf( CROSS_CLR MED_CLR );
+					if ( is_presentable )
+						std::printf( "%c", curr_byte );
+					else
+						std::printf( "%s", unpresentable_symbol );
+					std::printf( "\033[0m" );
+				}
+			}	
+			std::printf( OUTER_BORDER "│"  GOTO_NEXT_LINE );
+		}
+		std::printf(    "╰────┸───────────────────────────────────────────────┸────────────────╯" );
+#		undef CROSS_CLR
+#		undef GOTO_NEXT_LINE
+	}
+	
+private:
+	// TODO: keyboard input listener
+	system_t *system    = nullptr;
+	u16       x=0, y=0;
+	u8        top_row   = 0x0F;
+	u16       curr_addr = 0x1004;
 };
 
 struct keyboard_widget_t final: public widget_i
@@ -2366,18 +2489,20 @@ main( int const argc, char const *const argv[] )
 	bool  is_running    = true;
 	bool  is_stepping   = true;
 	bool  should_step   = false;
+	auto  app           = tui_app_t                 {};
 	auto  system        = system_t                  {};
 	u8   *keyboard_port = system.get_ram()+0xFF01;
 	u8   *display_block = system.get_ram()+0x1000;
-	auto  logger        = log_widget_t<9>           {                      87,  2 };
+	auto  logger        = log_widget_t<29,35>       {                     159,  2 };
 	logger.push( "Initializing..." );
 	logger.push( "Loading widgets... ");
 	auto  terminal      = terminal_display_t<80,25> { display_block,        3,  2 };
 	auto  dbg_cpu       = cpu_debug_82x4_display_t  { &system.get_cpu(),    2, 29 };
 	auto  history       = history_log_t<18>         { &system,              2, 33 };
 	auto  stk_display   = stack_hex_display_t       { &system,             87, 33 };
-	auto  zpg_display   = ram_page_hex_display_t    { &system, 0x00,       87, 13 };
+	auto  zpg_display   = ram_page_hex_display_t    { &system, 0x00,      142, 33 };
 	auto  prg_display   = program_hex_display_t     { &system,             32, 33 };
+	auto  hex_editor    = mem_edit_widget_t<27>     { &system,             87,  2 };
 	auto  keyboard_w    = keyboard_widget_t         { keyboard_port,        0,  0 };
 	auto  keyboard      = keyboard_t                { keyboard_port, &is_running, &is_stepping, &should_step };
 	
@@ -2393,6 +2518,7 @@ main( int const argc, char const *const argv[] )
 		&zpg_display,
 		&prg_display,
 		&logger,
+		&hex_editor,
 		&keyboard_w
 	};
 		
@@ -2474,32 +2600,33 @@ main( int const argc, char const *const argv[] )
 	/* 033A        RTS         */  0x60
 		};
 		u16 prg_start_addr = 0x0300; // TODO: refactor into optional PPM define
-			
-		u8 const txt[2048] = " xx Hello world!                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                                "
-		                     "                                                                             123"
-		                     "                                                                             xyz";
+		
+		u8 txt[2048] = " xx Hello world!                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                             123"
+		               "                                                                             xyz";
+		txt[33] = 0x15; // intentional error
 		std::memcpy( (void*)display_block, txt, sizeof(txt) );
 		
 		std::memcpy( (void*)(system.get_ram()+prg_start_addr), prg, sizeof(prg) );
@@ -2507,9 +2634,7 @@ main( int const argc, char const *const argv[] )
 	}
 	
 	system.get_cpu().PC = *(u16*)(system.get_ram() + 0xFFFC);
-	
-	auto  app           = tui_app_t                 {};
-	
+		
 	logger.push( "Starting IO thread" );
 	auto io_thread = std::jthread(
 		[&is_running, &keyboard] {
@@ -2558,7 +2683,7 @@ main( int const argc, char const *const argv[] )
 	
 	logger.push( "Exit signal received. Exiting..." );
 	// TODO: save logs to file
-	std::this_thread::sleep_for(1s);	// temp
+	std::this_thread::sleep_for(1s); // temp
 	return 0;
 }
 
