@@ -42,6 +42,7 @@ using namespace::std::literals;
 #define LABEL         "\033[1;33m"
 #define OUTER_BORDER  "\033[0;1;97m"
 #define INNER_BORDER  "\033[1;97m"
+#define CROSS_CLR     "\033[48;5;237m"
 #define DIM_CLR       "\033[90m"
 #define MED_CLR       "\033[38;5;248m"
 #define BRT_CLR       "\033[97m"
@@ -592,16 +593,16 @@ public:
 	           u8 const arg1=0,
 	           u8 const arg2=0 )
 	{
-#define SYM_CLR "\033[0;1;33m"
-#define IMM_CLR "\033[0;1;31m"
-#define ZPG_CLR "\033[0;1;37m"
-#define HEX_CLR "\033[0;1;93m"
-#define NUM_CLR "\033[0;1;97m"
-#define REG_CLR "\033[0;1;36m"
+#define SYM_CLR "\033[1;90m"
+#define IMM_CLR "\033[1;31m"
+#define ZPG_CLR "\033[1;37m"
+#define HEX_CLR "\033[1;93m"
+#define NUM_CLR "\033[1;97m"
+#define REG_CLR "\033[1;36m"
 		//std::fprintf( stderr, "at(op_code: %02" PRIX8 ")\n", op_code );
 		try {
 			auto const info = op_meta_tbl.at(op_code); // TODO: handle exception?
-			std::printf( "\033[0;1;33m%.3s\033[0m ", info.mnemonic ); // print instruction
+			std::printf( "\033[1;33m%.3s ", info.mnemonic ); // print instruction
 			switch ( info.address_mode ) {
 				case implied:     std::printf(         " "         " "         "  "                " "           " "           " "         " "             ); break;
 				case accumulator: std::printf( REG_CLR " "         "A"         "  "                " "           " "           " "         " "             ); break;
@@ -2049,9 +2050,9 @@ struct history_log_t final: public widget_i
 		
 		for ( u8 i=0; i<entries_to_print; ++i ) {
 			auto const e    = system->get_history().peek(i);
-			std::printf( OUTER_BORDER "│" "\033[0;38m" "%04" PRIX16 " ", e.addr );
+			std::printf( OUTER_BORDER "│" "%s" "\033[38m" "%04" PRIX16 " ", (i==0? CROSS_CLR : "\033[0m"), e.addr );
 			system_t::print_asm( e.op, e.arg1, e.arg2 );
-			std::printf( "\033[0;38;5;238m" " ;" "\033[0;90m%" PRIu8 " cycles" OUTER_BORDER "│" "\033[B\033[%uG", e.cycles, x );
+			std::printf( "\033[38;5;240m" " ;" "\033[90m%" PRIu8 " cycles" OUTER_BORDER "│" "\033[B\033[%uG", e.cycles, x );
 		}
 		for ( u8 i=rows-entries_to_print; i; --i )
 			std::printf( OUTER_BORDER "│                           │" "\033[B\033[%uG", x );
@@ -2195,7 +2196,6 @@ struct program_hex_display_t final: public widget_i
 	update() noexcept final
 	{
 #		define GOTO_NEXT_LINE   "\033[B\033[54D" 
-#		define CROSS_CLR        "\033[48;5;237m"
 		assert( system );
 		auto const &CPU     = system->get_cpu();
 		auto const *RAM     = system->get_ram();
@@ -2207,9 +2207,9 @@ struct program_hex_display_t final: public widget_i
 		             GOTO_NEXT_LINE "│" LABEL "p." "%02" PRIX8, y, x, page_no );
 		
 		std::printf( INNER_BORDER "┃" );
-		for ( u8 col=0; col<0x10; ++col ) {
+		for ( u8 col=0; col<=0xF; ++col ) {
 			auto const is_active_col = col == (PC&0xF);
-			std::printf( "%s" DIM_CLR "0"  "%s%" PRIX8 "\033[0m%s", (is_active_col? CROSS_CLR : ""), (is_active_col? LABEL : BRT_CLR), col, (col==0xF? "":" ") );
+			std::printf( "%s" "0"  "%s%" PRIX8 "\033[0m%s", (is_active_col? CROSS_CLR MED_CLR : DIM_CLR), (is_active_col? LABEL : BRT_CLR), col, (col==0xF? "":" ") );
 		}
 		
 		std::printf( OUTER_BORDER "│" GOTO_NEXT_LINE "┝" INNER_BORDER "━━━━╋" );
@@ -2223,11 +2223,11 @@ struct program_hex_display_t final: public widget_i
 		auto const op_end   = PC + get_op_byte_size(OP) - 1;
 			
 		u16 curr_addr = PC & 0xFF00;
-		for ( u8 row=0; row<0x10; ++row ) {
+		for ( u8 row=0; row<=0xF; ++row ) {
 			bool is_active_row = (curr_addr&0xFFF0)==(PC&0xFFF0);
-			std::printf( OUTER_BORDER "│" "%s" "%02" PRIX8 "%s%1" PRIX8 DIM_CLR "0" INNER_BORDER "┃",
-			             (is_active_row? CROSS_CLR "\033[1;33m" : "\033[90m"), page_no, (is_active_row? LABEL : BRT_CLR), row );
-			for ( u8 col=0; col<0x10; ++col, ++curr_addr ) {
+			std::printf( OUTER_BORDER "│" "%s" "%02" PRIX8 "%s%1" PRIX8 "%s" "0" INNER_BORDER "┃",
+			             (is_active_row? CROSS_CLR "\033[1;33m" : "\033[90m"), page_no, (is_active_row? LABEL : BRT_CLR), row, (is_active_row? MED_CLR : DIM_CLR) );
+			for ( u8 col=0; col<=0xF; ++col, ++curr_addr ) {
 				bool is_active_col = (curr_addr&0xFF0F) == (PC&0xFF0F);
 				auto const curr_byte = RAM[curr_addr];
 				if ( curr_addr < op_start or curr_addr > op_end )
@@ -2245,7 +2245,6 @@ struct program_hex_display_t final: public widget_i
 			std::printf( OUTER_BORDER "│" GOTO_NEXT_LINE );
 		}
 		std::printf("╰────┸───────────────────────────────────────────────╯");
-#		undef CROSS_CLR
 #		undef GOTO_NEXT_LINE
 	}
 private:
@@ -2382,7 +2381,6 @@ struct mem_edit_widget_t final: public widget_i
 	void
 	update() noexcept final
 	{
-#		define CROSS_CLR        "\033[48;5;237m"
 #		define GOTO_NEXT_LINE   "\033[B\033[71D" 
 		bool widget_is_active = true;
 		assert( system );
@@ -2396,7 +2394,7 @@ struct mem_edit_widget_t final: public widget_i
 		std::printf(    "╭────┰───────────────────────────────────────────────┰────────────────╮"  GOTO_NEXT_LINE 
 		                "│" LABEL " HEX" INNER_BORDER "┃");
 		for ( u8 col=0; col<=0xF; ++col )
-			std::printf( "%s" DIM_CLR "0" "%s" "%01" PRIX8 "\033[0m" "%s", (widget_is_active and col==curr_col? CROSS_CLR : ""), (widget_is_active and col==curr_col? LABEL : BRT_CLR), col, (col==0xF? "":" ") );
+			std::printf( "%s" "%01" PRIX8 "\033[0m" "%s", (widget_is_active and col==curr_col? CROSS_CLR MED_CLR "0" LABEL : DIM_CLR "0" BRT_CLR), col, (col==0xF? "":" ") );
 		std::printf( INNER_BORDER "┃" );
 		for ( u8 col=0; col<=0xF; ++col )
 			std::printf( "%s" "%s" "%01" PRIX8 "\033[0m", (widget_is_active and col==curr_col? CROSS_CLR:""), (widget_is_active and col==curr_col? LABEL : BRT_CLR), col );
@@ -2409,13 +2407,13 @@ struct mem_edit_widget_t final: public widget_i
 		for ( u16 row=0; row<rows; ++row ) {
 			u16  const curr_row_addr = (top_row << 8) + (row << 4 );
 			bool const is_active_row = (curr_addr&0xFFF0) == curr_row_addr;
-			std::printf( OUTER_BORDER "│" "%s" "%03" PRIX16 DIM_CLR "0" INNER_BORDER "┃", (is_active_row? CROSS_CLR LABEL : BRT_CLR), (curr_row_addr>>4) );
+			std::printf( OUTER_BORDER "│" "%s" "%03" PRIX16 "%s" INNER_BORDER "┃", (is_active_row? CROSS_CLR LABEL : BRT_CLR), (curr_row_addr>>4), (is_active_row? MED_CLR "0" : DIM_CLR "0") );
 			// hex:
 			for ( u8 col=0; col<=0xF; ++col ) {
 				u8   const curr_byte = RAM[curr_row_addr+col];
 				bool const is_active_col = col == (curr_addr&0xF);
 				if ( is_active_row )
-					std::printf( "%s" "%02" PRIX8 "%s", (is_active_col? LABEL : MED_CLR), curr_byte, col==0xF?"":" " );
+					std::printf( "%s" "%02" PRIX8 "%s" "%s", (is_active_col? "\033[1;93;48;5;235m" : MED_CLR), curr_byte, (is_active_col? CROSS_CLR:""), col==0xF?"":" " );
 				else
 					std::printf( "%s" "%02" PRIX8 "\033[0m%s", (is_active_col? CROSS_CLR MED_CLR : DIM_CLR), curr_byte, col==0xF?"":" " );
 			}
@@ -2427,9 +2425,9 @@ struct mem_edit_widget_t final: public widget_i
 				bool const is_active_col  = col == (curr_addr&0xF);
 				if ( is_active_row ) {
 					if ( is_presentable )
-						std::printf( "%s" "%c", (is_active_col? LABEL : MED_CLR), curr_byte );
+						std::printf( "%s" "%c" "%s", (is_active_col? "\033[1;93;48;5;235m" : MED_CLR), curr_byte, (is_active_col? CROSS_CLR : "") );
 					else
-						std::printf( "%s", unpresentable_symbol );
+						std::printf( CROSS_CLR "%s", unpresentable_symbol );
 				}
 				else {
 					if ( is_active_col )
@@ -2444,7 +2442,6 @@ struct mem_edit_widget_t final: public widget_i
 			std::printf( OUTER_BORDER "│"  GOTO_NEXT_LINE );
 		}
 		std::printf(    "╰────┸───────────────────────────────────────────────┸────────────────╯" );
-#		undef CROSS_CLR
 #		undef GOTO_NEXT_LINE
 	}
 	
