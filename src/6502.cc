@@ -59,6 +59,13 @@ using i16 = std::int16_t;
 
 using f32 = float;
 
+// TODO: args
+//       --fps N                (   N: 1~255)
+//       --hz  ADDR             (ADDR: 1~65535)
+//       --bin FILEPATH ADDR    (BOOL: 0|n|N for false; 1|y|Y for true)
+//       --stepmode BOOL
+//       --startaddr ADDR
+
 // TODO: Memory display modes? HEX/ASCII
 // TODO: Keyboard input
 // TODO: Only update changes in widgets instead of reprinting them
