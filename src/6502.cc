@@ -13,20 +13,19 @@
 #include <unordered_map>
 
 namespace curses {
-	#include "curses.h" // TODO: statically link in the make file
+	#include "curses.h" // TODO: statically link?
 }
 
 struct tui_app_t final
 {
 	tui_app_t()
 	{
-		// TODO: create in main
 		curses::initscr();
 		curses::cbreak();
 		curses::noecho();
 		curses::keypad( curses::stdscr, true );
 		// keyboard IO thread
-		// widgets  IO thread
+		// widgets TUI thread
 	}
 	
 	~tui_app_t() noexcept
@@ -2423,55 +2422,78 @@ struct mem_edit_widget_t final: public widget_i
 	void
 	update( bool is_active ) noexcept final
 	{
-#		define GOTO_NEXT_LINE   "\033[B\033[71D" 
+#		define GOTO_NEXT_LINE   "\033[B\033[71D"
 		assert( system );
 		auto const *RAM = system->get_ram();
-		// top_marginal, btm_marginal
-		// side movement... wrap? next line? block?
-		// mode... hex? ascii?
-		// confirm edit?
+		// TODO:
+		//       top_marginal, btm_marginal
+		//       side movement... wrap? next line? block?
+		//       confirm edit?
 		u8 curr_col = curr_addr & 0xF;
-		std::printf(    "\033[?25l\033[%u;%uH" "%s", y, x, (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER) );
-		std::printf(    "╭────┰───────────────────────────────────────────────┰────────────────╮"  GOTO_NEXT_LINE 
-		                "│" LABEL " HEX" "%s" "┃", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER) );
+		std::printf( "\033[?25l\033[%u;%uH" "%s", y, x, (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER) );
+		std::printf( "╭────┰───────────────────────────────────────────────┰────────────────╮"  GOTO_NEXT_LINE 
+		             "│" LABEL " HEX" "%s" "┃", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER) );
+		// hex cols:
 		for ( u8 col=0; col<=0xF; ++col )
-			std::printf( "%s" "%01" PRIX8 "\033[0m" "%s", (is_active and col==curr_col? CROSS_CLR MED_CLR "0" LABEL : DIM_CLR "0" BRT_CLR), col, (col==0xF? "":" ") );
+			std::printf( "%s" "%01" PRIX8 "\033[0m" "%s", (is_hex_mode and (col==curr_col)? CROSS_CLR MED_CLR "0" LABEL : DIM_CLR "0" BRT_CLR), col, (col==0xF? "":" ") );
 		std::printf( "%s" "┃", (is_active? ACTIVE_INNER_BORDER : INACTIVE_INNER_BORDER) );
+		// ascii cols:
 		for ( u8 col=0; col<=0xF; ++col )
-			std::printf( "%s" "%s" "%01" PRIX8 "\033[0m", (is_active and col==curr_col? CROSS_CLR:""), (is_active and col==curr_col? LABEL : BRT_CLR), col );
+			std::printf( "%s" "%s" "%01" PRIX8 "\033[0m", (not is_hex_mode and (col==curr_col)? CROSS_CLR:""), (not is_hex_mode and (col==curr_col)? LABEL : BRT_CLR), col );
 		std::printf( "%s" "│" GOTO_NEXT_LINE "┝" "%s" "━━━━╋", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), (is_active? ACTIVE_INNER_BORDER : INACTIVE_INNER_BORDER) );
+		// hex cols:
 		for ( u8 col=0; col<=0xF; ++col )
-			std::printf( "%s" "━━" "\033[0m" "%s" "%s", (is_active and col==curr_col? CROSS_CLR : ""), (is_active? ACTIVE_INNER_BORDER : INACTIVE_INNER_BORDER), (col<0xF? "━":"╋") );
+			std::printf( "%s" "━━" "\033[0m" "%s" "%s", (is_hex_mode and (col==curr_col)? CROSS_CLR : ""), (is_active? ACTIVE_INNER_BORDER : INACTIVE_INNER_BORDER), (col<0xF? "━":"╋") );
+		// ascii cols:
 		for ( u8 col=0; col<=0xF; ++col )
-			std::printf( "%s" "━" "\033[0m" "%s", (is_active and col==curr_col? CROSS_CLR : ""), (is_active? ACTIVE_INNER_BORDER : INACTIVE_INNER_BORDER) );
+			std::printf( "%s" "━" "\033[0m" "%s", (not is_hex_mode and (col==curr_col)? CROSS_CLR : ""), (is_active? ACTIVE_INNER_BORDER : INACTIVE_INNER_BORDER) );
 		std::printf( "%s" "┥"  GOTO_NEXT_LINE, (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER) );
+		u16  curr_row_addr = top_row << 8;
+		auto prev_row_addr = curr_row_addr;
 		for ( u16 row=0; row<rows; ++row ) {
-			u16  const curr_row_addr = (top_row << 8) + (row << 4 );
+			bool const crossed_pages = (prev_row_addr&0xFF00) != (curr_row_addr&0xFF00);
+		// dashed separator: (if about to cross over to a new page)
+			if ( crossed_pages ) {
+				std::printf( "%s" "│" "••••" "%s" "┠", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), (is_active? ACTIVE_INNER_BORDER : INACTIVE_INNER_BORDER) );
+				// hex cols:
+				for ( u8 col=0; col<=0xF; ++col )
+					std::printf( "%s" "┄┄" "\033[0m" "%s" "%s", (is_hex_mode and (col==curr_col)? CROSS_CLR : ""), (is_active? ACTIVE_INNER_BORDER : INACTIVE_INNER_BORDER), (col==0xF?"":"┄") );
+				std::printf( "╂" );
+				// ascii cols:
+				for ( u8 col=0; col<=0xF; ++col ) {
+					if ( (col==curr_col) and not is_hex_mode )
+						std::printf( CROSS_CLR "┄" "\033[0m" "%s", (is_active? ACTIVE_INNER_BORDER : INACTIVE_INNER_BORDER) );
+					else
+						std::printf( "┄" );
+				};
+				std::printf( "%s" "┤" GOTO_NEXT_LINE, (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER) );
+				prev_row_addr = curr_row_addr;
+				continue;
+			}
+		// otherwise regular memory data row:
 			bool const is_active_row = (curr_addr&0xFFF0) == curr_row_addr;
 			std::printf( "%s" "│" "%s" "%03" PRIX16 "%s" "%s" "┃", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), (is_active_row? CROSS_CLR LABEL : BRT_CLR), (curr_row_addr>>4), (is_active_row? MED_CLR "0" : DIM_CLR "0"), (is_active? ACTIVE_INNER_BORDER : INACTIVE_INNER_BORDER) );
-			// hex:
+			// hexi cols:
 			for ( u8 col=0; col<=0xF; ++col ) {
 				u8   const curr_byte = RAM[curr_row_addr+col];
-				bool const is_active_col = col == (curr_addr&0xF);
 				if ( is_active_row )
-					std::printf( "%s" "%02" PRIX8 "%s" "%s", (is_active_col? "\033[1;93;48;5;235m" : MED_CLR), curr_byte, (is_active_col? CROSS_CLR:""), col==0xF?"":" " );
+					std::printf( "%s" "%02" PRIX8 "%s" "%s", ((col==curr_col)? (is_hex_mode? "\033[1;93;48;5;235m" : BRT_CLR) : MED_CLR), curr_byte, ((col==curr_col)? CROSS_CLR:""), col==0xF?"":" " );
 				else
-					std::printf( "%s" "%02" PRIX8 "\033[0m%s", (is_active_col? CROSS_CLR MED_CLR : DIM_CLR), curr_byte, col==0xF?"":" " );
+					std::printf( "%s" "%02" PRIX8 "\033[0m%s", (is_hex_mode and (col==curr_col)? CROSS_CLR MED_CLR : DIM_CLR), curr_byte, col==0xF?"":" " );
 			}
 			std::printf( "%s" "┃", (is_active? ACTIVE_INNER_BORDER : INACTIVE_INNER_BORDER) );
-			// ascii:
+			// ascii cols:
 			for ( u8 col=0; col<=0xF; ++col ) {
 				u8   const curr_byte      = RAM[curr_row_addr+col];
 				u8   const is_presentable = is_presentable_symbol(curr_byte);
-				bool const is_active_col  = col == (curr_addr&0xF);
 				if ( is_active_row ) {
 					if ( is_presentable )
-						std::printf( "%s" "%c" "%s", (is_active_col? "\033[1;93;48;5;235m" : MED_CLR), curr_byte, (is_active_col? CROSS_CLR : "") );
+						std::printf( "%s" "%c" "%s", ((col==curr_col)? (is_hex_mode? BRT_CLR :"\033[1;93;48;5;235m") : MED_CLR), curr_byte, ((col==curr_col)? CROSS_CLR : "") );
 					else
 						std::printf( CROSS_CLR "%s", unpresentable_symbol );
 				}
 				else {
-					if ( is_active_col )
+					if ( (col==curr_col) and not is_hex_mode )
 						std::printf( CROSS_CLR MED_CLR );
 					if ( is_presentable )
 						std::printf( "%c", curr_byte );
@@ -2481,6 +2503,8 @@ struct mem_edit_widget_t final: public widget_i
 				}
 			}	
 			std::printf( "%s" "│"  GOTO_NEXT_LINE, (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER) );
+			prev_row_addr = curr_row_addr;
+			curr_row_addr += 0x10;
 		}
 		std::printf( "╰────┸───────────────────────────────────────────────┸────────────────╯" );
 #		undef GOTO_NEXT_LINE
@@ -2488,10 +2512,11 @@ struct mem_edit_widget_t final: public widget_i
 	
 private:
 	// TODO: keyboard input listener
-	system_t *system    = nullptr;
+	system_t *system      = nullptr;
 	u16       x=0, y=0;
-	u8        top_row   = 0x0F;
-	u16       curr_addr = 0x1004;
+	u8        top_row     = 0x0F;
+	u16       curr_addr   = 0x1004;
+	bool      is_hex_mode = true;
 };
 
 struct keyboard_widget_t final: public widget_i
