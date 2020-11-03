@@ -6,10 +6,12 @@
 #include <cstdlib>
 #include <ctime>
 
+#include <optional>
 #include <string>
 #include <chrono>
 #include <thread>
 #include <utility>
+#include <memory>
 #include <unordered_map>
 
 namespace curses {
@@ -23,7 +25,7 @@ struct tui_app_t final
 		curses::initscr();
 		curses::cbreak();
 		curses::noecho();
-		curses::keypad( curses::stdscr, true );
+		curses::keypad( curses::stdscr, TRUE );
 		// keyboard IO thread
 		// widgets TUI thread
 	}
@@ -39,10 +41,10 @@ using namespace::std::literals;
 
 // TODO: suffix with CLR?
 #define LABEL                  "\033[1;33m"
-#define INACTIVE_OUTER_BORDER  "\033[0;1;97m"
-#define INACTIVE_INNER_BORDER  "\033[1;97m"
-#define ACTIVE_OUTER_BORDER    "\033[0;1;33m"
-#define ACTIVE_INNER_BORDER    "\033[1;33m"
+#define INACTIVE_OUTER_BORDER  "\033[38;5;231m"
+#define INACTIVE_INNER_BORDER  "\033[38;5;231m"
+#define ACTIVE_OUTER_BORDER    "\033[38;5;222m"
+#define ACTIVE_INNER_BORDER    "\033[38;5;222m"
 #define CROSS_CLR              "\033[48;5;237m"
 #define DIM_CLR                "\033[90m"
 #define MED_CLR                "\033[38;5;248m"
@@ -65,6 +67,8 @@ using f32 = float;
 //       --stepmode BOOL
 //       --startaddr ADDR
 
+// TODO: add "begin writing program here" to MEM (open code editor?)
+// TODO: memory wrap-around smoothly when going down?
 // TODO: Memory display modes? HEX/ASCII
 // TODO: Keyboard input
 // TODO: Only update changes in widgets instead of reprinting them
@@ -101,6 +105,7 @@ using f32 = float;
 // TODO: Centered dots instead of '?' in hex editor?
 // TODO: Breakpoints? Integrate with the memory editor
 
+/* DEPRECATED
 [[nodiscard]] inline auto
 timer() noexcept -> f32
 {
@@ -109,28 +114,62 @@ timer() noexcept -> f32
 	std::chrono::duration<f32,std::milli> elapsed = clock_t::now() - start;
 	return elapsed.count();
 };
+*/
+
+// TODO: refactor
+namespace key {
+	[[nodiscard]] auto constexpr
+	is_up( int key ) noexcept -> bool
+	{
+		if ( key == 'w' or key == 'W' ) return true; // WASD
+		//if ( key == 'k' or key == 'K' ) return true; // Vi hjkl
+		if ( key == KEY_UP            ) return true; // arrow keys
+		return false;
+	}
+	
+	[[nodiscard]] auto constexpr
+	is_left( int key ) noexcept -> bool
+	{
+		if ( key == 'a' or key == 'A' ) return true; // WASD
+		//if ( key == 'h' or key == 'H' ) return true; // Vi hjkl
+		if ( key == KEY_LEFT          ) return true; // arrow keys
+		return false;
+	}
+	
+	[[nodiscard]] auto constexpr
+	is_right( int key ) noexcept -> bool
+	{
+		if ( key == 'd' or key == 'D' ) return true; // WASD
+		//if ( key == 'l' or key == 'L' ) return true; // Vi hjkl
+		if ( key == KEY_RIGHT         ) return true; // arrow keys
+		return false;
+	}
+	
+	[[nodiscard]] auto constexpr
+	is_down( int key ) noexcept -> bool
+	{
+		if ( key == 's' or key == 'S' ) return true; // WASD
+		//if ( key == 'j' or key == 'J' ) return true; // Vi hjkl
+		if ( key == KEY_DOWN          ) return true; // arrow keys
+		return false;
+	}
+} // end-of-namespace key
 
 struct keyboard_t {
 	// TODO: implement!
 	// TODO: handle meta keys
 	// TODO: handle up/down/pressed?
-	void
-	update() noexcept
+	auto
+	get_input() noexcept -> std::optional<int>
 	{
-		assert( port and is_running_ptr );
-		*port = getchar();
-		// terminate when "x" is pressed
-		if ( *port == 'x' )
-			*is_running_ptr = false;
-		else if ( *port == 's' )
-			*is_stepping_ptr = not *is_stepping_ptr; // flip
-		else if ( *is_stepping_ptr and *port == 'n' )
-			*should_step_ptr = true;
+		assert( port );
+		int key_pressed = wgetch( curses::stdscr );
+		*port = key_pressed; // TODO: handle multi-byte?
+		if ( key_pressed )
+			return key_pressed;
+		else return {};
 	}
 	u8   *port            = nullptr;
-	bool *is_running_ptr  = nullptr;
-	bool *is_stepping_ptr = nullptr;
-	bool *should_step_ptr = nullptr;
 };
 
 // TODO: clean these two temporary hacks up
@@ -1873,8 +1912,10 @@ public:
 struct widget_i
 {
 	virtual ~widget_i() {}
-	virtual void redraw( bool is_active ) = 0;
-	virtual void update( bool is_active ) = 0;
+	virtual auto process_input( int ) -> bool = 0;
+	virtual void redraw( bool is_active )     = 0;
+	virtual void draw(   bool is_active )     = 0;
+	virtual void update( bool is_active )     = 0;
 };
 
 
@@ -1885,7 +1926,7 @@ struct cpu_debug_15x10_display_t final: public widget_i
 	u8 x=0, y=0;
 	
 	virtual void
-	update() noexcept
+	draw() noexcept
 	{
 		using namespace cpu;
 		assert( CPU );
@@ -1925,12 +1966,23 @@ struct cpu_debug_82x4_display_t final: public widget_i
 	~cpu_debug_82x4_display_t() noexcept final = default;
 	
 	void
+	update( bool is_active ) noexcept final
+	{
+	}
+	
+	auto
+	process_input( int input ) -> bool final
+	{
+		return false;
+	}
+	
+	void
 	redraw( bool is_active ) noexcept final
 	{
 	}
 	
 	void
-	update( bool is_active ) noexcept final
+	draw( bool is_active ) noexcept final
 	{
 		using namespace cpu;
 		
@@ -1996,7 +2048,8 @@ is_presentable_symbol( u8 const c ) noexcept -> bool
 	return c > 0x1F and c < 0x7F;
 }
 
-constexpr char unpresentable_symbol[] = "\033[1;31m?";
+constexpr char unpresentable_symbol_terminal[]   = "?";
+constexpr char unpresentable_symbol_hex_editor[] = "·";
 
 
 template <u8 width, u8 height>
@@ -2011,12 +2064,23 @@ struct terminal_display_t final: public widget_i
 	~terminal_display_t() noexcept final = default;
 	
 	void
+	update( bool is_active ) noexcept final
+	{
+	}
+	
+	auto
+	process_input( int input ) -> bool final
+	{
+		return false;
+	}
+	
+	void
 	redraw( bool is_active ) noexcept final
 	{
 	}
 	
 	void
-	update( bool is_active ) noexcept
+	draw( bool is_active ) noexcept
 	{
 		static char hdr[3*(width+2)+1],
 		            ftr[3*(width+2)+1];
@@ -2034,14 +2098,14 @@ struct terminal_display_t final: public widget_i
 		          row_addr_offset  < last_row_addr;
 		          row_addr_offset += width )
 		{
-			std::printf( "│" );
+			std::printf( "│" "\033[0m" );
 			bool is_end_met = false;
 			for ( u16 col=0; col<width; ++col ) {
 				u8 c = block_start[row_addr_offset+col]; // raw byte
 				if ( c == '\n' or c == '\0' ) 
 					is_end_met = true;
 				if ( not is_presentable_symbol(c) )
-					std::printf( unpresentable_symbol );
+					std::printf( "\033[1;31m" "%s" "\033[0m", unpresentable_symbol_terminal );
 				else
 					std::printf( "%c", is_end_met? ' ' : c );
 			}
@@ -2068,12 +2132,23 @@ struct history_log_t final: public widget_i
 	~history_log_t() noexcept final = default;
 	
 	void
+	update( bool is_active ) noexcept final
+	{
+	}
+	
+	auto
+	process_input( int input ) -> bool final
+	{
+		return false;
+	}
+	
+	void
 	redraw( bool is_active ) noexcept final
 	{
 	}
 	
 	void
-	update( bool is_active ) noexcept
+	draw( bool is_active ) noexcept
 	{
 		assert( system );
 		
@@ -2112,12 +2187,23 @@ struct stack_hex_display_t final: public widget_i
 	~stack_hex_display_t() noexcept final = default;
 	
 	void
+	update( bool is_active ) noexcept final
+	{
+	}
+	
+	auto
+	process_input( int input ) -> bool final
+	{
+		return false;
+	}
+	
+	void
 	redraw( bool is_active ) noexcept final
 	{
 	}
 	
 	void
-	update( bool is_active ) noexcept final
+	draw( bool is_active ) noexcept final
 	{
 #		define GOTO_NEXT_LINE   "\033[B\033[54D" 
 		const u16 page_base_addr = 0x0100;
@@ -2164,12 +2250,23 @@ struct ram_page_hex_display_t final: public widget_i
 	~ram_page_hex_display_t() noexcept final = default;
 	
 	void
+	update( bool is_active ) noexcept final
+	{
+	}
+	
+	auto
+	process_input( int input ) -> bool final
+	{
+		return false;
+	}
+	
+	void
 	redraw( bool is_active ) noexcept final
 	{
 	}
 	
 	void
-	update( bool is_active ) noexcept final
+	draw( bool is_active ) noexcept final
 	{
 #		define GOTO_NEXT_LINE   "\033[B\033[54D" 
 		const u16 page_base_addr = page_no * 0x100;
@@ -2223,12 +2320,23 @@ struct program_hex_display_t final: public widget_i
 	~program_hex_display_t () noexcept final = default;
 	
 	void
+	update( bool is_active ) noexcept final
+	{
+	}
+	
+	auto
+	process_input( int input ) -> bool final
+	{
+		return false;
+	}
+	
+	void
 	redraw( bool is_active ) noexcept final
 	{
 	}
 	
 	void
-	update( bool is_active ) noexcept final
+	draw( bool is_active ) noexcept final
 	{
 #		define GOTO_NEXT_LINE   "\033[B\033[54D" 
 		assert( system );
@@ -2278,7 +2386,7 @@ struct program_hex_display_t final: public widget_i
 				if ( not is_active_row )
 					std::printf( "%s" "%02" PRIX8 "\033[0m%s", (is_active_col? CROSS_CLR : ""), curr_byte, col==0xF?"":" " );
 				else {
-					std::printf( "%02" PRIX8 CROSS_CLR "%s", curr_byte, col==0xF?"":" " );
+					std::printf( "%02" PRIX8 CROSS_CLR "%s", curr_byte, col==0xF?"\033[0m":" " );
 				}
 			}
 			std::printf( "%s" "│" GOTO_NEXT_LINE, (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER) );
@@ -2352,9 +2460,21 @@ struct log_widget_t final: public widget_i
 	
 	log_widget_t ( u16 x, u16 y ) noexcept:
 		widget_i(), entries(rows), x(x), y(y)
-	{}
+	{
+	}
 	
 	~log_widget_t () noexcept final = default;
+	
+	void
+	update( bool is_active ) noexcept final
+	{
+	}
+	
+	auto
+	process_input( int input ) -> bool final
+	{
+		return false;
+	}
 	
 	inline void
 	push( char const *msg ) noexcept
@@ -2368,7 +2488,7 @@ struct log_widget_t final: public widget_i
 	}
 	
 	void
-	update( bool is_active ) noexcept final
+	draw( bool is_active ) noexcept final
 	{
 		// TODO: add support for line break if message is too long for the width
 		static char hdr[3*(width+2)+1],
@@ -2401,45 +2521,568 @@ private:
 	u16         x=0, y=0;
 };
 
-template <u8 rows>
-struct mem_edit_widget_t final: public widget_i
+
+
+[[nodiscard]] constexpr auto
+is_hex( u8 const c ) noexcept -> bool
 {
-	mem_edit_widget_t () noexcept = default;
+	return (c>='0' and c<='9') or (c>='a' and c<='f') or (c>='A' and c<='F');
+}
+
+
+
+[[nodiscard]] constexpr auto
+is_dec( u8 const c ) noexcept -> bool
+{
+	return (c>='0' and c<='9');
+}
+
+
+
+[[nodiscard]] constexpr auto
+hex_to_dec( u8 const c ) -> u8
+{
+	if      (c>='0' and c<='9') return c - '0';
+	else if (c>='a' and c<='f') return c - 'a' + 10;
+	else if (c>='A' and c<='F') return c - 'A' + 10;
+	else throw "Invalid input!"; // TODO: replace with proper exception
+}
+
+
+
+struct num_prompt_widget_t final: public widget_i
+{
+	num_prompt_widget_t( num_prompt_widget_t const &)            noexcept       = default;
+	num_prompt_widget_t( num_prompt_widget_t      &&)            noexcept       = default;
+	num_prompt_widget_t()                                        noexcept       = default;
+	num_prompt_widget_t& operator=( num_prompt_widget_t const &) noexcept       = default;
+	num_prompt_widget_t& operator=( num_prompt_widget_t      &&) noexcept       = default;
+	~num_prompt_widget_t()                                       noexcept final = default;
 	
-	mem_edit_widget_t ( system_t *system, u16 x, u16 y ) noexcept:
-		widget_i(), system(system), x(x), y(y)
-	{}
-	
-	~mem_edit_widget_t () noexcept final = default;
-	
-	void
-	redraw( bool is_active ) noexcept final
+	num_prompt_widget_t( u8 &num, bool is_hex_mode, u16 x, u16 y ) noexcept:
+		widget_i(), is_hex_mode(is_hex_mode), num_ptr(&num), x(x), y(y)
 	{
 	}
-
+	
+	auto
+	process_input( int key ) -> bool final
+	{
+		if ( _is_done )
+			return true;
+		
+		switch (key) {
+			case 'x':
+			case 'X':
+			case KEY_F(1): { // TODO: replace with escape
+				_is_done = true;
+				break;
+			}
+			
+			case KEY_BACKSPACE:
+			{
+				if ( is_hex_mode )
+					buffer >>= 4;
+				else 
+					buffer /= 10;
+				if ( curr_digit )
+					--curr_digit;
+				break;
+			}
+			
+			case '\n':
+			case '\r':
+			case KEY_ENTER:
+			{
+				*num_ptr = buffer;
+				_is_done = true;
+				break;
+			}
+			
+			default:
+			{
+				if ( is_hex(key) and curr_digit < 2 and is_hex_mode ) {
+					buffer <<= 4;
+					buffer  += hex_to_dec(key);
+					++curr_digit;
+				}
+				else if ( is_dec(key) and curr_digit < 3 and not is_hex_mode ) {
+					if ( (key-'0' + buffer*10) < 256 ) {
+						buffer *= 10;
+						buffer += key - '0';
+						++curr_digit;
+					}
+				}
+			}
+		}
+		return true;
+	}
 	
 	void
 	update( bool is_active ) noexcept final
 	{
+	}
+	
+	void
+	redraw( bool is_active ) noexcept final
+	{
+		auto constexpr goto_next_line =  "\033[B\033[19D";
+		std::printf( "\033[%u;%uH", y, x ); // go to upper-left corner
+		auto const *outer_border_clr = (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER );
+		auto const *inner_border_clr = (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER );
+		std::printf(
+			"%s" "╭"       "─────────────────"      "╮" "%s"
+			"%s" "│" LABEL "  Insert number  " "%s" "│" "%s"
+			"%s" "┝" "%s"  "━━━━━━━━━━━━━━━━━" "%s" "┥" "%s",
+			outer_border_clr,                                     goto_next_line,
+			outer_border_clr,                   outer_border_clr, goto_next_line,
+			outer_border_clr, inner_border_clr, outer_border_clr, goto_next_line
+		);
+		if ( is_hex_mode )
+			std::printf( "%s" "│" " " "\033[2C" DIM_CLR "        00~FF " "%s" "│" "%s", outer_border_clr, outer_border_clr, goto_next_line );
+		else
+			std::printf( "%s" "│" " " "\033[3C" DIM_CLR  "       0~255 " "%s" "│" "%s", outer_border_clr, outer_border_clr, goto_next_line );
+		std::printf( "%s" "└"         "─────────────────"      "┘", outer_border_clr );
+	}
+	
+	void
+	draw( bool is_active ) noexcept final
+	{
+		constexpr auto active = "\033[0;43;30m";
+		constexpr auto normal = "\033[0;40;1;37m";
+		redraw( is_active ); // TODO: remove when redraw system is implemented
+		std::printf( "\033[%u;%uH", y+3, x+2 ); // go to start of input
+		if ( is_hex_mode ) 
+			std::printf( "%s" "%2" PRIX8 "\033[1D" "%s" "%1" PRIX8 "\033[0m", normal, buffer, (curr_digit<2? active : normal), (buffer&0x000F) );
+		else
+			std::printf( "%s" "%3" PRIu8 "\033[1D" "%s" "%1" PRIu8 "\033[0m", normal, buffer, (curr_digit<3? active : normal), (buffer%10) );
+	}
+	
+	[[nodiscard]] auto inline
+	is_done() const noexcept -> bool
+	{
+		return _is_done;
+	}
+	
+private:
+	bool _is_done    = false;
+	bool is_hex_mode = false;
+	u8  *num_ptr     = nullptr;
+	u8   buffer      = 0;
+	u8   x=0, y=0, curr_digit=0;
+};
+
+
+
+struct addr_prompt_widget_t final: public widget_i
+{
+	addr_prompt_widget_t( addr_prompt_widget_t const &)            noexcept       = default;
+	addr_prompt_widget_t( addr_prompt_widget_t      &&)            noexcept       = default;
+	addr_prompt_widget_t()                                         noexcept       = default;
+	addr_prompt_widget_t& operator=( addr_prompt_widget_t const &) noexcept       = default;
+	addr_prompt_widget_t& operator=( addr_prompt_widget_t      &&) noexcept       = default;
+	~addr_prompt_widget_t()                                        noexcept final = default;
+	
+	addr_prompt_widget_t( u16 &addr, u16 x, u16 y ) noexcept:
+		widget_i(), addr_ptr(&addr), x(x), y(y)
+	{
+	}
+	
+	auto
+	process_input( int key ) -> bool final
+	{
+		if ( _is_done )
+			return true;
+		
+		switch (key) {
+			case 'x':
+			case 'X':
+			case KEY_F(1): { // TODO: replace with escape
+				_is_done = true;
+				break;
+			}
+			
+			case KEY_BACKSPACE:
+			{
+				buffer >>= 4;
+				if ( curr_digit )
+					--curr_digit;
+				break;
+			}
+			
+			case '\n':
+			case '\r':
+			case KEY_ENTER:
+			{
+				*addr_ptr = buffer;
+				_is_done = true;
+				break;
+			}
+			
+			default:
+			{
+				if ( curr_digit < 4 and is_hex(key) ) {
+					buffer <<= 4;
+					buffer  += hex_to_dec(key);
+					++curr_digit;
+				}
+			}
+		}
+		return true;
+	}
+	
+	void
+	update( bool is_active ) noexcept final
+	{
+	}
+	
+	void
+	redraw( bool is_active ) noexcept final
+	{
+		auto constexpr goto_next_line =  "\033[B\033[19D";
+		std::printf( "\033[%u;%uH", y, x ); // go to upper-left corner
+		auto const *outer_border_clr = (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER );
+		auto const *inner_border_clr = (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER );
+		std::printf(
+			"%s" "╭"         "─────────────────"      "╮" "%s"
+			"%s" "│" LABEL   "  Go to address  " "%s" "│" "%s"
+			"%s" "┝" "%s"    "━━━━━━━━━━━━━━━━━" "%s" "┥" "%s"
+		//	"%s" "│" MED_CLR " Target address: " "%s" "│" "%s"
+			"%s" "│" DIM_CLR " " "\033[4C" "  0000~FFFF " "%s" "│" "%s"
+			"%s" "└"         "─────────────────"      "┘",
+			outer_border_clr,                                     goto_next_line,
+			outer_border_clr,                   outer_border_clr, goto_next_line,
+			outer_border_clr, inner_border_clr, outer_border_clr, goto_next_line,
+		//	outer_border_clr,                   outer_border_clr, goto_next_line,
+			outer_border_clr,                   outer_border_clr, goto_next_line,
+			outer_border_clr 
+		);
+	}
+	
+	void
+	draw( bool is_active ) noexcept final
+	{
+		constexpr auto active = "\033[0;43;30m";
+		constexpr auto normal = "\033[0;40;1;37m";
+		redraw( is_active ); // TODO: remove when redraw system is implemented
+		std::printf( "\033[%u;%uH", y+3, x+2 ); // go to start of input
+		std::printf( "%s" "%4" PRIX16 "\033[1D" "%s" "%1" PRIX16 "\033[0m", normal, buffer, (curr_digit<4? active : normal), (buffer&0x000F) );
+	}
+	
+	[[nodiscard]] auto inline
+	is_done() const noexcept -> bool
+	{
+		return _is_done;
+	}
+	
+private:
+	bool _is_done = false;
+	u16  buffer   = 0;
+	u16 *addr_ptr = nullptr;
+	u8   x=0, y=0, curr_digit=0;
+};
+
+/*
+struct prompt_widget_t final: public widget_i
+{
+	auto
+	process_input( int input ) -> bool final
+	{
+		if ( _content ) {
+			auto const child_consumed_input = _content->process_input(key) );
+			return true;
+		}
+		if ( key == KEY_F(1) )
+
+		return false;
+	}
+
+	inline void
+	redraw( bool is_active ) noexcept final
+	{
+		auto const *color      = is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER;
+		auto const *next_line  = "\033[B\033[71D";
+		std::printf( "\033[%u;%uH" "%s" // go to upper-left corner
+			"╭─────────────────╮" "%s"
+			"│                 │" "%s"
+			"┝━━━━━━━━━━━━━━━━━┥" "%s"
+			"│                 │" "%s"
+			"│                 │" "%s"
+			"└─────────────────┘", y, x, color
+		);
+		if ( content )
+			content->redraw( is_active );
+	}
+
+	inline void
+	draw( bool is_active ) noexcept final
+	{
+		if ( is_active and not was_active_last_frame )
+			redraw();
+		content->draw( is_active );
+	}
+	
+	inline void
+	set_title( char const *new_title ) noexcept
+	{
+		_title = new_title;
+		_update_width();
+	}
+	
+private:
+	bool        _was_active_last_frame = false;
+	u8          _x                     = 0,
+	            _y                     = 0,
+	            _width                 = 3,
+	            _height                = 5;
+	widget_i   *_content               = nullptr;
+	char const *_title                 = "";
+	
+	inline void
+	_update_width() noexcept
+	{
+		auto const     old_width = _width;
+		auto const   title_width =  strlen( _title ) + 2; // space padding before and after
+		auto const content_width = _content? _content->width() : 0;
+		_width = std::max( title_width, content_width ) + 2; // border |
+		if ( old_width != _width ) {
+			redraw();
+			draw();
+		}
+	}
+};
+*/
+/*
+
+│ Target address: │
+│ ____  0000~FFFF │
+└─────────────────┘
+
+╭─────────────╮
+│ Edit memory │
+┝━━━━━━━━━━━━━┥
+│ New value:  │
+│ __    00~FF │
+└─────────────┘
+
+╭─────────────╮
+│ Edit memory │
+┝━━━━━━━━━━━━━┥
+│ New value:  │
+│ ___   0~255 │
+└─────────────┘
+
+
+│F200┃00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00┃················│
+│F210┃00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00┃················│
+│F220┃00 00 00 00 00 00 00 ................0 00 00 00┃················│
+│F230┃00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00┃················│
+│F240┃00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00┃················│
+70
+
+
+70-16=54
+54/2 = 27
+*/
+
+template <u8 rows>
+struct mem_edit_widget_t final: public widget_i
+{
+	mem_edit_widget_t ( mem_edit_widget_t const & ) = delete;
+	mem_edit_widget_t ( mem_edit_widget_t      && ) = default;
+//		widget_i(), system(system), x(x), (y) {}
+	
+	mem_edit_widget_t () noexcept = default;
+	
+	mem_edit_widget_t ( system_t *system, u16 x, u16 y ) noexcept:
+		widget_i(), system(system), x(x), y(y)
+	{
+		_ensure_in_display_bounds();
+	}
+	
+	~mem_edit_widget_t () noexcept final = default;
+	
+	void
+	update( bool is_active ) noexcept final
+	{
+		assert( system );
+		if ( addr_prompt ) {
+			addr_prompt->update( is_active );
+			if (addr_prompt->is_done() ) {
+				addr_prompt = nullptr; // close
+				_ensure_in_display_bounds();
+			}
+		}
+		if ( num_prompt ) {
+			num_prompt->update( is_active );
+			if (num_prompt->is_done() ) {
+				num_prompt = nullptr; // close
+				_ensure_in_display_bounds();
+			}
+		}
+	}
+	
+	auto
+	process_input( int key ) -> bool final
+	{
+		assert( system );
+		
+		if ( addr_prompt )
+			return addr_prompt->process_input( key );
+		else if ( num_prompt )
+			return num_prompt->process_input( key );
+		else switch( key ) {
+			case KEY_LEFT  : { _dec_addr(0x001); goto end; }
+			case KEY_RIGHT : { _inc_addr(0x001); goto end; }
+			case KEY_UP    : { _dec_addr(0x010); goto end; }
+			case KEY_DOWN  : { _inc_addr(0x010); goto end; }
+			case KEY_PPAGE : { _dec_addr(0x100); goto end; }
+			case KEY_NPAGE : { _inc_addr(0x100); goto end; }
+			case KEY_HOME  : { curr_addr=0x0000; _ensure_in_display_bounds(); goto end; }
+			case KEY_END   : { curr_addr=0xFFFF; _ensure_in_display_bounds(); goto end; }
+		}
+		if ( is_edit_mode ) {
+			if ( is_hex_mode ) {
+				switch ( key )
+				{
+					case 'd':
+					case 'D':
+					{
+						num_prompt = std::make_unique<num_prompt_widget_t>( system->get_ram()[curr_addr], false, x+20, y+14 );
+						break;
+					}
+					
+					case 'g':
+					case 'G':
+					{
+						addr_prompt = std::make_unique<addr_prompt_widget_t>( curr_addr, x+20, y+14 );
+						break;
+					}
+					
+					case 'h':
+					case 'H':
+					{
+						num_prompt = std::make_unique<num_prompt_widget_t>( system->get_ram()[curr_addr], true, x+20, y+14 );
+						break;
+					}
+					
+					case 'x':
+					case 'X':
+					case KEY_F(1):
+					{
+						is_edit_mode = false;
+						break;
+					}
+				}
+			}
+			else { // dec mode
+				switch ( key )
+				{
+					case KEY_ENTER:
+					case '\r':
+					case '\n':
+					{
+						is_edit_mode = false;
+						break;
+					}
+					
+					case KEY_BACKSPACE:
+					{
+						system->get_ram()[curr_addr--] = ' ';
+						break;
+					}
+					
+					case KEY_DC: // delete
+					{
+						system->get_ram()[curr_addr] = ' '; // TODO: move subsequent (until break) ascii forward?
+						break;
+					}
+					
+					// TODO: tabs!
+					
+					default: // TODO: sanitize input
+						system->get_ram()[curr_addr++] = key;
+				}
+			}
+		}
+		else { // not edit mode
+			if      ( key::is_left  (key) ) _dec_addr(0x001);
+			else if ( key::is_right (key) ) _inc_addr(0x001);
+			else if ( key::is_up    (key) ) _dec_addr(0x010);
+			else if ( key::is_down  (key) ) _inc_addr(0x010);
+			else switch ( key )
+			{
+				case 'g':
+				case 'G':
+				{
+					addr_prompt = std::make_unique<addr_prompt_widget_t>( curr_addr, x+20, y+14 );
+					break;
+				}
+				
+				case 'm':
+				case 'M':
+				{
+					is_hex_mode = not is_hex_mode;
+					break;
+				}
+				
+				case 'i':
+				case 'I':
+				case 'e':
+				case 'E':
+				{
+					is_edit_mode = true;
+					break;
+				}
+			}
+		}
+	//	else if ( 'b' == key ) brk_tbl.at(curr_addr) = not brk_tbl.at(curr_addr);
+	//	TODO: add to watch list?
+		end: return true; // monopolize input
+	}
+	
+	void
+	redraw( bool is_active ) noexcept final
+	{
+		if ( num_prompt )
+			num_prompt->redraw( is_active );
+		if ( addr_prompt )
+			addr_prompt->redraw( is_active );
+	}
+
+	void
+	draw( bool is_active ) noexcept final
+	{
+		if ( num_prompt ) {
+			_draw_frame( false );
+			num_prompt->draw( is_active );
+			return;
+		}
+		else if ( addr_prompt ) {
+			_draw_frame( false );
+			addr_prompt->draw( is_active );
+			return;
+		}
 		// TODO:
 		//       top_marginal, btm_marginal
 		//       side movement... wrap? next line? block?
 		//       confirm edit?
-#		define GOTO_NEXT_LINE   "\033[B\033[71D"
+#		define ACTIVE_UNPRESENTABLE_CLR   "\033[38;5;1m"
+#		define INACTIVE_UNPRESENTABLE_CLR "\033[38;5;1m"
 		assert( system );
 		auto const *RAM = system->get_ram();
 		u8 curr_col = curr_addr & 0xF;
+
+		_draw_frame( is_active );
 	// header:
-		std::printf( "\033[?25l\033[%u;%uH" "%s", y, x, (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER) );
-		std::printf( "╭────┰───────────────────────────────────────────────┰────────────────╮"  GOTO_NEXT_LINE "│" LABEL " HEX" "%s" "┃", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER) );
+		std::printf( "\033[%u;%uH" LABEL "%s" "\033[1C", y+1, x+1, (is_edit_mode? "EDIT":"VIEW") );
 		// hex cols:
 		for ( u8 col=0; col<=0xF; ++col )
-			std::printf( "%s" "%01" PRIX8 "\033[0m" "%s", (is_hex_mode and (col==curr_col)? CROSS_CLR MED_CLR "0" LABEL : DIM_CLR "0" BRT_CLR), col, (col==0xF? "":" ") );
-		std::printf( "%s" "┃", (is_active? ACTIVE_INNER_BORDER : INACTIVE_INNER_BORDER) );
+			std::printf( "%s" "%01" PRIX8 "\033[0m" "%s", (is_hex_mode and (col==curr_col)? CROSS_CLR MED_CLR "0" LABEL : DIM_CLR "0" BRT_CLR), col, (col==0xF? "\033[1C":" ") );
 		// ascii cols:
 		for ( u8 col=0; col<=0xF; ++col )
 			std::printf( "%s" "%s" "%01" PRIX8 "\033[0m", (not is_hex_mode and (col==curr_col)? CROSS_CLR:""), (not is_hex_mode and (col==curr_col)? LABEL : BRT_CLR), col );
-		std::printf( "%s" "│" GOTO_NEXT_LINE "┝" "%s" "━━━━╋", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), (is_active? ACTIVE_INNER_BORDER : INACTIVE_INNER_BORDER) );
+/*
+		std::printf( "\033[%u;%uH", y+2, x+1 );
 		// hex cols:
 		for ( u8 col=0; col<=0xF; ++col )
 			std::printf( "%s" "━━" "\033[0m" "%s" "%s", (is_hex_mode and (col==curr_col)? CROSS_CLR : ""), (is_active? ACTIVE_INNER_BORDER : INACTIVE_INNER_BORDER), (col<0xF? "━":"╋") );
@@ -2447,10 +3090,13 @@ struct mem_edit_widget_t final: public widget_i
 		for ( u8 col=0; col<=0xF; ++col )
 			std::printf( "%s" "━" "\033[0m" "%s", (not is_hex_mode and (col==curr_col)? CROSS_CLR : ""), (is_active? ACTIVE_INNER_BORDER : INACTIVE_INNER_BORDER) );
 		std::printf( "%s" "┥"  GOTO_NEXT_LINE, (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER) );
-		u16  curr_row_addr = top_row << 8;
-		auto prev_row_addr = curr_row_addr;
+*/
 	// main rows:
+		u16  curr_row_addr = top_row_addr;
+		//auto prev_row_addr = curr_row_addr;
 		for ( u16 row=0; row<rows; ++row ) {
+			std::printf( "\033[%u;%uH", y+3+row, x );
+/*
 			bool const crossed_pages = (prev_row_addr&0xFF00) != (curr_row_addr&0xFF00);
 		// dashed separator: (if about to cross over to a new page)
 			if ( crossed_pages ) {
@@ -2470,55 +3116,361 @@ struct mem_edit_widget_t final: public widget_i
 				prev_row_addr = curr_row_addr;
 				continue; // continue printing rows
 			}
+*/
 		// otherwise regular memory data row:
 			bool const is_active_row = (curr_addr&0xFFF0) == curr_row_addr;
-			std::printf( "%s" "│" "%s" "%03" PRIX16 "%s" "%s" "┃", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), (is_active_row? CROSS_CLR LABEL : BRT_CLR), (curr_row_addr>>4), (is_active_row? MED_CLR "0" : DIM_CLR "0"), (is_active? ACTIVE_INNER_BORDER : INACTIVE_INNER_BORDER) );
+			auto const *bg_col = (curr_row_addr>>8) % 2? "\033[48;5;239m" : "\033[48;5;240m"; // TODO: refactor out?
+			std::printf( "\033[1C" "%s" "%s" "%03" PRIX16 "%s" "\033[1C", bg_col, (is_active_row? CROSS_CLR LABEL : BRT_CLR), (curr_row_addr>>4), (is_active_row? MED_CLR "0" : DIM_CLR "0") );
 			// hex cols:
 			for ( u8 col=0; col<=0xF; ++col ) {
 				u8  const curr_byte = RAM[curr_row_addr+col];
 				if ( is_active_row )
-					std::printf( "%s" "%02" PRIX8 "%s" "%s", ((col==curr_col)? (is_hex_mode? "\033[1;93;48;5;235m" : BRT_CLR) : MED_CLR), curr_byte, ((col==curr_col)? CROSS_CLR:""), col==0xF?"":" " );
-				else
-					std::printf( "%s" "%02" PRIX8 "\033[0m%s", (is_hex_mode and (col==curr_col)? CROSS_CLR MED_CLR : DIM_CLR), curr_byte, col==0xF?"":" " );
+					std::printf( "%s" "%02" PRIX8 "%s" "%s", ((col==curr_col)? (is_hex_mode? "\033[1;93;48;5;235m" : BRT_CLR) : MED_CLR), curr_byte, ((col==curr_col)? CROSS_CLR:""), col==0xF?"\033[1C":" " );
+				else {
+					std::printf( "%s" "%02" PRIX8 "\033[0m" "%s" "%s", (is_hex_mode? (col==curr_col? CROSS_CLR MED_CLR : BRT_CLR) : DIM_CLR), curr_byte, bg_col, col==0xF?"\033[1C":" " );
+				}
 			}
-			std::printf( "%s" "┃", (is_active? ACTIVE_INNER_BORDER : INACTIVE_INNER_BORDER) );
 			// ascii cols:
 			for ( u8 col=0; col<=0xF; ++col ) {
 				u8  const curr_byte      = RAM[curr_row_addr+col];
 				u8  const is_presentable = is_presentable_symbol(curr_byte);
 				if ( is_active_row ) {
+					if ( col==curr_col )
+						std::printf( "\033[4m" );
+					
 					if ( is_presentable )
-						std::printf( "%s" "%c" "%s", ((col==curr_col)? (is_hex_mode? "\033[4m" BRT_CLR :"\033[1;93;48;5;235m") : MED_CLR), curr_byte, ((col==curr_col)? "\033[0m" CROSS_CLR : "") );
+						std::printf( "%s" "%c", (col==curr_col? (is_hex_mode? BRT_CLR : "\033[1;93;48;5;235m") : (is_hex_mode? MED_CLR : BRT_CLR)), curr_byte );
 					else
-						std::printf( CROSS_CLR "%s", unpresentable_symbol );
+						std::printf( ACTIVE_UNPRESENTABLE_CLR "%s" "%s", (col==curr_col? (not is_hex_mode? "\033[48;5;234m":"") : INACTIVE_UNPRESENTABLE_CLR), unpresentable_symbol_hex_editor );
+					
+					if ( col==curr_col )
+						std::printf( "\033[0m" "%s" CROSS_CLR, bg_col );
 				}
 				else {
-					if ( (col==curr_col) and not is_hex_mode )
-						std::printf( CROSS_CLR MED_CLR );
+					if ( col==curr_col and not is_hex_mode )
+						std::printf( CROSS_CLR );
+					
 					if ( is_presentable )
-						std::printf( "%c", curr_byte );
+						std::printf( "%s" "%c", (is_hex_mode? DIM_CLR : BRT_CLR /*(col==curr_col? BRT_CLR : MED_CLR)*/), curr_byte );
 					else
-						std::printf( "%s", unpresentable_symbol );
-					std::printf( "\033[0m" );
+						std::printf( INACTIVE_UNPRESENTABLE_CLR "%s", unpresentable_symbol_hex_editor );
+					
+					if ( col==curr_col and not is_hex_mode )
+						std::printf( "\033[0m" "%s", bg_col );
 				}
 			}	
-			std::printf( "%s" "│"  GOTO_NEXT_LINE, (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER) );
-			prev_row_addr =  curr_row_addr;
+			// prev_row_addr =  curr_row_addr;
 			curr_row_addr += 0x10; // next row
 		}
-	// footer:
-		std::printf( "╰────┸───────────────────────────────────────────────┸────────────────╯" );
-#		undef GOTO_NEXT_LINE
 	}
 	
 private:
 	// TODO: keyboard input listener
-	system_t *system      = nullptr;
-	u16       x=0, y=0;
-	u8        top_row     = 0x0F;
-	u16       curr_addr   = 0x1004;
-	bool      is_hex_mode = true;
+	system_t                             *system            = nullptr;
+	u16                                   x                 = 0;
+	u16                                   y                 = 0;
+	u16                                   top_row_addr      = 0x1000; // TODO
+	u16                                   curr_addr         = 0x1000; // TODO
+	bool                                  is_hex_mode       = true;
+	bool                                  is_edit_mode      = false;
+	u8                                    min_edge_distance = 3;
+	std::unique_ptr< num_prompt_widget_t> num_prompt        = nullptr;
+	std::unique_ptr<addr_prompt_widget_t> addr_prompt       = nullptr;
+	
+	void inline
+	_dec_addr( u16 const offset ) noexcept
+	{
+		curr_addr -= offset;
+		_ensure_in_display_bounds();
+	}
+	
+	void inline
+	_inc_addr( u16 const offset ) noexcept
+	{
+		curr_addr += offset;
+		_ensure_in_display_bounds();
+	}
+	
+	void inline
+	_draw_frame( bool is_active ) noexcept
+	{
+		auto constexpr goto_next_line   = "\033[B\033[71D";
+		auto const    *outer_border_clr = (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER );
+		auto const    *inner_border_clr = (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER );
+		std::printf( "\033[?25l\033[%u;%uH" "%s", y, x, outer_border_clr );
+		// print header:
+		std::printf(    "╭"   "────┰───────────────────────────────────────────────┰────────────────"   "╮%s"
+		                "│\033[4C%s┃\033[47C"                                     "┃\033[16C"         "%s│%s" 
+						    "┝%s" "━━━━╋━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╋━━━━━━━━━━━━━━━━" "%s┥%s",
+						    goto_next_line,
+						    inner_border_clr, outer_border_clr, goto_next_line,
+						    inner_border_clr, outer_border_clr, goto_next_line );
+		// body:
+		for ( u8 row=0; row<rows; ++row )
+			std::printf( "│\033[4C%s┃\033[47C"                                     "┃\033[16C"         "%s│%s",
+							inner_border_clr, outer_border_clr, goto_next_line );
+		// footer:
+		std::printf(    "╰"   "────┸───────────────────────────────────────────────┸────────────────"   "╯" );
+	}
+	
+	void inline
+	_ensure_in_display_bounds() noexcept // TODO: transitions issue! special transition for end-of-RAM? PG.UP and PG.DN! Fix arrow reading
+	{
+/*
+		auto transitions_between = []( u16 upper_addr, u16 lower_addr ) -> u16 {
+			int i_lower = lower_addr >> 8;
+			int i_upper = upper_addr >> 8;
+			if ( i_lower >= i_upper )
+				i_lower -= 0x100;
+			return i_upper - i_lower;
+		};
+*
+*
+*/
+		/*
+		auto min_raw = (curr_addr&0xFFF0)-(min_edge_distance<<4);
+		auto min_adj = min_raw + (transitions_between(curr_addr,min_raw));
+		if ( top_row_addr < min_adj )
+			top_row_addr = min_adj;*/
+/*
+
+		// ensure bottom row padding:
+		if ( (std::abs( (int)(top_row_addr) - (curr_addr&0xFFF0) )>>4) >= (rows-min_edge_distance-1) ) {
+		//else if ( std::abs( ((int)(top_row_addr>>4) + rows) - (curr_addr>>4)) < min_edge_distance+2 ) // TODO: fix!
+			u16 x               = (((u16)rows - min_edge_distance - 2) << 4);
+			u16 bottom_row_addr = (curr_addr&0xFFF0) + min_edge_distance;
+			bottom_row_addr    -= transitions_between( bottom_row_addr, curr_addr );
+			top_row_addr        = bottom_row_addr - 5;
+		}
+		// ensure top row padding:
+		/else if ( std::abs((int)(curr_addr>>4) - (top_row_addr>>4)) < min_edge_distance ) {
+			top_row_addr  = (curr_addr&0xFFF0) - ((u16)(min_edge_distance)<<4);
+			top_row_addr += transitions_between( curr_addr, top_row_addr );
+		}/
+*/
+		auto const pad_offs = min_edge_distance<<4;
+		auto const row_offs = rows<<4;
+		auto const curr_row = curr_addr&0xFFF0;
+		if ( top_row_addr + pad_offs >= curr_row )
+			top_row_addr = curr_row - pad_offs;
+		else if ( top_row_addr + row_offs - pad_offs <= curr_row )
+				top_row_addr = curr_row + pad_offs - row_offs + 0x10;
+	}
 };
+
+
+[[nodiscard]] constexpr auto
+key_to_string( int key ) noexcept
+{
+	switch ( key )
+	{
+		case KEY_F0:        return "F0";
+		case KEY_F( 1):     return "F1";
+		case KEY_F( 2):     return "F2";
+		case KEY_F( 3):     return "F3";
+		case KEY_F( 4):     return "F4";
+		case KEY_F( 5):     return "F5";
+		case KEY_F( 6):     return "F6";
+		case KEY_F( 7):     return "F7";
+		case KEY_F( 8):     return "F8";
+		case KEY_F( 9):     return "F9";
+		case KEY_F(10):     return "F10";
+		case KEY_F(11):     return "F11";
+		case KEY_F(12):     return "F12";
+		case KEY_PPAGE:     return "Page Up";
+		case KEY_NPAGE:     return "Page Down";
+		case KEY_DOWN:      return "Down";
+		case KEY_UP:        return "Up";
+		case KEY_LEFT:      return "Left";
+		case KEY_RIGHT:     return "Right";
+		case KEY_BREAK:     return "Break";
+		case KEY_HOME:      return "Home";
+		case KEY_BACKSPACE: return "Backspace";
+		case KEY_DL:        return "Delete Line";
+		case KEY_IL:        return "Insert Line";
+		case KEY_DC:        return "Delete";
+		case KEY_IC:        return "Insert";
+		case KEY_EIC:       return "Exit Insert Mode";
+		case KEY_CLEAR:     return "Clear";
+		case KEY_EOS:       return "End-of-Screen";
+		case KEY_EOL:       return "End-of-Line";
+		case KEY_SF:        return "Scroll Forward";
+		case KEY_SR:        return "Scroll Backward";
+		case KEY_STAB:      return "Set Tab";
+		case KEY_CTAB:      return "Clear Tab";
+		case KEY_CATAB:     return "Clear All Tabs";
+		case '\r':
+		case '\n':
+		case KEY_ENTER:     return "Enter";
+		case KEY_SRESET:    return "Soft Reset";
+		case KEY_RESET:     return "Hard Reset";
+		case KEY_PRINT:     return "Print";
+/*
+KEY_LL	Home down or bottom (lower left)
+KEY_A1	Upper left of keypad
+KEY_A3	Upper right of keypad
+KEY_B2	Center of keypad
+KEY_C1	Lower left of keypad
+KEY_C3	Lower right of keypad
+KEY_BTAB	Back tab key
+KEY_BEG	Beg(inning) key
+KEY_CANCEL	Cancel key
+KEY_CLOSE	Close key
+KEY_COMMAND	Cmd (command) key
+KEY_COPY	Copy key
+KEY_CREATE	Create key
+KEY_MARK	Mark key
+KEY_MESSAGE	Message key
+
+KEY_MOUSE	Mouse event read
+KEY_MOVE	Move key
+KEY_NEXT	Next object key
+KEY_OPEN	Open key
+KEY_OPTIONS	Options key
+KEY_PREVIOUS	Previous object key
+KEY_REDO	Redo key
+KEY_REFERENCE	Ref(erence) key
+KEY_REFRESH	Refresh key
+KEY_REPLACE	Replace key
+KEY_RESIZE	Screen resized
+KEY_RESTART	Restart key
+KEY_RESUME	Resume key
+KEY_SAVE	Save key
+KEY_SBEG	Shifted beginning key
+KEY_SCANCEL	Shifted cancel key
+KEY_SCOMMAND	Shifted command key
+KEY_SCOPY	Shifted copy key
+KEY_SCREATE	Shifted create key
+KEY_SDC	Shifted delete char key
+KEY_SDL	Shifted delete line key
+KEY_SELECT	Select key
+KEY_SEND	Shifted end key
+KEY_SEOL	Shifted clear line key
+KEY_SEXIT	Shifted exit key
+KEY_SFIND	Shifted find key
+KEY_SHELP	Shifted help key
+KEY_SHOME	Shifted home key
+KEY_SIC	Shifted input key
+KEY_SLEFT	Shifted left arrow key
+KEY_SMESSAGE	Shifted message key
+KEY_SMOVE	Shifted move key
+KEY_SNEXT	Shifted next key
+KEY_SOPTIONS	Shifted options key
+KEY_SPREVIOUS	Shifted prev key
+KEY_SPRINT	Shifted print key
+KEY_SREDO	Shifted redo key
+KEY_SREPLACE	Shifted replace key
+KEY_SRIGHT	Shifted right arrow
+KEY_SRESUME	Shifted resume key
+KEY_SSAVE	Shifted save key
+KEY_SSUSPEND	Shifted suspend key
+KEY_SUNDO	Shifted undo key
+KEY_SUSPEND	Suspend key
+KEY_UNDO	Undo key
+*/
+		case KEY_END:       return "End";
+		case KEY_EXIT:      return "Exit";
+		case KEY_FIND:      return "Find";
+		case KEY_HELP:      return "Help";
+		case '\'':         return "\'";
+		case '\\':         return "\\";
+		case ' ':          return "Space";
+		case '\"':         return "\"";
+		case '!':          return "!";
+		case '#':          return "#";
+		case '$':          return "$";
+		case '%':          return "%";
+		case '&':          return "&";
+		case '(':          return "(";
+		case ')':          return ")";
+		case '*':          return "*";
+		case '+':          return "+";
+		case ',':          return ",";
+		case '-':          return "-";
+		case '.':          return ".";
+		case '/':          return "/";
+		case ':':          return ":";
+		case ';':          return ";";
+		case '<':          return "<";
+		case '=':          return "=";
+		case '>':          return ">";
+		case '?':          return "?";
+		case '@':          return "@";
+		case '[':          return "[";
+		case ']':          return "]";
+		case '^':          return "^";
+		case '_':          return "_";
+		case '`':          return "`";
+		case '{':          return "{";
+		case '|':          return "|";
+		case '}':          return "}";
+		case '~':          return "~";
+		case '0':          return "0";
+		case '1':          return "1";
+		case '2':          return "2";
+		case '3':          return "3";
+		case '4':          return "4";
+		case '5':          return "5";
+		case '6':          return "6";
+		case '7':          return "7";
+		case '8':          return "8";
+		case '9':          return "9";
+		case 'a':          return "a";
+		case 'b':          return "b";
+		case 'c':          return "c";
+		case 'd':          return "d";
+		case 'e':          return "e";
+		case 'f':          return "f";
+		case 'g':          return "g";
+		case 'h':          return "h";
+		case 'i':          return "i";
+		case 'j':          return "j";
+		case 'k':          return "k";
+		case 'l':          return "l";
+		case 'm':          return "m";
+		case 'n':          return "n";
+		case 'o':          return "o";
+		case 'p':          return "p";
+		case 'q':          return "q";
+		case 'r':          return "r";
+		case 's':          return "s";
+		case 't':          return "t";
+		case 'u':          return "u";
+		case 'v':          return "v";
+		case 'w':          return "w";
+		case 'x':          return "x";
+		case 'y':          return "y";
+		case 'z':          return "z";
+		case 'A':          return "A";
+		case 'B':          return "B";
+		case 'C':          return "C";
+		case 'D':          return "D";
+		case 'E':          return "E";
+		case 'F':          return "F";
+		case 'G':          return "G";
+		case 'H':          return "H";
+		case 'I':          return "I";
+		case 'J':          return "J";
+		case 'K':          return "K";
+		case 'L':          return "L";
+		case 'M':          return "M";
+		case 'N':          return "N";
+		case 'O':          return "O";
+		case 'P':          return "P";
+		case 'Q':          return "Q";
+		case 'R':          return "R";
+		case 'S':          return "S";
+		case 'T':          return "T";
+		case 'U':          return "U";
+		case 'V':          return "V";
+		case 'W':          return "W";
+		case 'X':          return "X";
+		case 'Y':          return "Y";
+		case 'Z':          return "Z";
+		default:           return "Unknown";
+	}
+}
+
 
 struct keyboard_widget_t final: public widget_i
 {
@@ -2531,45 +3483,68 @@ struct keyboard_widget_t final: public widget_i
 	~keyboard_widget_t () noexcept final = default;
 	
 	void
+	update( bool is_active ) noexcept final
+	{
+	}
+	
+	auto
+	process_input( int key ) -> bool final
+	{
+		has_key  = true;
+		last_key = key;
+		return false;
+	}
+	
+	void
 	redraw( bool is_active ) noexcept final
 	{
 	}
 	
 	void
-	update( bool is_active ) noexcept final
+	draw( bool is_active ) noexcept final
 	{
-		assert( port );
-		if ( *port )
-			std::printf( "\033[?25l\033[%u;%uH" LABEL " Last keypress: " BRT_CLR "'%c'\033[0m", y, x, *port );
+		if ( has_key )
+			std::printf( "\033[0m\033[%u;%uH" LABEL " Last keypress: " DIM_CLR "'" BRT_CLR "%s" DIM_CLR "'\033[0m                ", y, x, key_to_string(last_key) );
 	}
+	
+	inline void
+	clear() noexcept
+	{
+		has_key = false;
+	}
+	
 private:
-	u8 const *port = nullptr;
+	bool      has_key  = false;
+	int       last_key = 0;
+	u8 const *port     = nullptr;
 	u16       x=0, y=0;
 };
 
 int
 main( int const argc, char const *const argv[] )
 {
-	bool  is_running    = true;
-	bool  is_stepping   = true;
-	bool  should_step   = false;
-	auto  app           = tui_app_t                 {};
-	auto  system        = system_t                  {};
-	u8   *keyboard_port = system.get_ram()+0xFF01;
-	u8   *display_block = system.get_ram()+0x1000;
-	auto  logger        = log_widget_t<29,35>       {                     159,  2 };
+	bool  is_running     = true;
+	bool  is_stepping    = true;
+	bool  is_in_nav_mode = false;
+	bool  should_step    = false;
+	auto  app            = tui_app_t                 {};
+	auto  system         = system_t                  {};
+	u8   *keyboard_port  = system.get_ram()+0xFF01;
+	u8   *display_block  = system.get_ram()+0x1000;
+	auto  logger         = log_widget_t<29,35>       {                     159,  2 };
 	logger.push( "Initializing..." );
 	logger.push( "Loading widgets... ");
-	auto  terminal      = terminal_display_t<80,25> { display_block,        3,  2 };
-	auto  dbg_cpu       = cpu_debug_82x4_display_t  { &system.get_cpu(),    2, 29 };
-	auto  history       = history_log_t<18>         { &system,              2, 33 };
-	auto  stk_display   = stack_hex_display_t       { &system,             87, 33 };
-	auto  zpg_display   = ram_page_hex_display_t    { &system, 0x00,      142, 33 };
-	auto  prg_display   = program_hex_display_t     { &system,             32, 33 };
-	auto  hex_editor    = mem_edit_widget_t<27>     { &system,             87,  2 };
-	auto  keyboard_w    = keyboard_widget_t         { keyboard_port,        0,  0 };
-	auto  keyboard      = keyboard_t                { keyboard_port, &is_running, &is_stepping, &should_step };
-	auto *active_widget = &hex_editor;	
+	auto  terminal       = terminal_display_t<80,25> { display_block,        3,  2 };
+	auto  dbg_cpu        = cpu_debug_82x4_display_t  { &system.get_cpu(),    2, 29 };
+	auto  history        = history_log_t<18>         { &system,              2, 33 };
+	auto  stk_display    = stack_hex_display_t       { &system,             87, 33 };
+	auto  zpg_display    = ram_page_hex_display_t    { &system, 0x00,      142, 33 };
+	auto  prg_display    = program_hex_display_t     { &system,             32, 33 };
+	auto  hex_editor     = mem_edit_widget_t<27>     { &system,             87,  2 };
+	auto  keyboard_w     = keyboard_widget_t         { keyboard_port,        0,  0 };
+	auto  keyboard       = keyboard_t                { keyboard_port               };
+	auto *active_widget  = (widget_i*)&terminal;	
+	auto *prev_widget    = active_widget;
 	logger.push( "Widgets loaded!" );
 	
 	system.get_cpu().Hz = argc > 3? std::atoi(argv[3]) : 500;
@@ -2586,7 +3561,7 @@ main( int const argc, char const *const argv[] )
 		&keyboard_w
 	};
 		
-	logger.push( "Loading program machine code..." );
+	logger.push( "Loading program code..." );
 	
 	if ( argc > 1 ) {
 		u16 prg_start_addr = argc > 2? std::atoi(argv[2]) : 0x0300; // TODO: refactor into optional PPM define
@@ -2665,23 +3640,23 @@ main( int const argc, char const *const argv[] )
 		};
 		u16 prg_start_addr = 0x0300; // TODO: refactor into optional PPM define
 		
-		u8 txt[2048] = " xx Hello world!                                                                "
+		u8 txt[2048] = " xx Hello world!                       this is a test                           "
+		               "             :D                  ^                                              "
+		               "                                 |__ this symbol should be invalid (red ?)      "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                        abcdefghjklmnopqrstuvwxyz                               "
+		               "                                                                                "
+		               "                                                                                "
+		               "                                                                                "
+		               "                              :(                                                "
 		               "                                                                                "
 		               "                                                                                "
 		               "                                                                                "
 		               "                                                                                "
 		               "                                                                                "
-		               "                                                                                "
-		               "                                                                                "
-		               "                                                                                "
-		               "                                                                                "
-		               "                                                                                "
-		               "                                                                                "
-		               "                                                                                "
-		               "                                                                                "
-		               "                                                                                "
-		               "                                                                                "
-		               "                                                                                "
+		               "         beep boop                                                              "
 		               "                                                                                "
 		               "                                                                                "
 		               "                                                                                "
@@ -2701,15 +3676,93 @@ main( int const argc, char const *const argv[] )
 		
 	logger.push( "Starting IO thread" );
 	auto io_thread = std::jthread(
-		[&is_running, &keyboard] {
+		[&] {
 			while ( is_running ) {
-				keyboard.update();
+				auto maybe_input = keyboard.get_input();
+				if ( maybe_input ) {
+					auto const key = *maybe_input;
+					keyboard_w.process_input( key );
+					
+					if ( key == KEY_BREAK ) {
+						is_in_nav_mode = true;
+						logger.push( "Entering nav mode" );
+					}
+					
+					if ( is_in_nav_mode ) {
+						if ( key::is_left(key) ) {
+							if ( active_widget != (widget_i*)&history )
+								prev_widget = active_widget;
+							if      ( active_widget == (widget_i*)&terminal   ) active_widget = (widget_i*)&logger;
+							else if ( active_widget == (widget_i*)&hex_editor ) active_widget = (widget_i*)&terminal;
+							else if ( active_widget == (widget_i*)&logger     ) active_widget = (widget_i*)&hex_editor;
+						}
+						
+						else if ( key::is_right(key) ) {
+							if ( active_widget != (widget_i*)&history )
+								prev_widget = active_widget;
+							if      ( active_widget == (widget_i*)&terminal   ) active_widget = (widget_i*)&hex_editor;
+							else if ( active_widget == (widget_i*)&hex_editor ) active_widget = (widget_i*)&logger;
+							else if ( active_widget == (widget_i*)&logger     ) active_widget = (widget_i*)&terminal;
+						}
+						
+						else if ( key::is_up(key) or key::is_down(key) ) {
+							if ( active_widget == (widget_i*)&history )
+								active_widget = prev_widget;
+							else {
+								prev_widget   = active_widget;
+								active_widget = (widget_i*)&history;
+							}
+						}
+						
+						else {
+							is_in_nav_mode = false;
+							logger.push( "Exiting nav mode" );
+						}
+					}
+					
+					else if ( key == KEY_SLEFT ) {
+						if ( active_widget != (widget_i*)&history )
+							prev_widget = active_widget;
+						if      ( active_widget == (widget_i*)&terminal   ) active_widget = (widget_i*)&logger;
+						else if ( active_widget == (widget_i*)&hex_editor ) active_widget = (widget_i*)&terminal;
+						else if ( active_widget == (widget_i*)&logger     ) active_widget = (widget_i*)&hex_editor;
+					}
+					
+					else if ( key == KEY_SRIGHT ) {
+						if ( active_widget != (widget_i*)&history )
+							prev_widget = active_widget;
+						if      ( active_widget == (widget_i*)&terminal   ) active_widget = (widget_i*)&hex_editor;
+						else if ( active_widget == (widget_i*)&hex_editor ) active_widget = (widget_i*)&logger;
+						else if ( active_widget == (widget_i*)&logger     ) active_widget = (widget_i*)&terminal;
+					}
+					
+					else if ( key == KEY_SF or key == KEY_SR ) {
+						if ( active_widget == (widget_i*)&history )
+							active_widget = prev_widget;
+						else {
+							prev_widget   = active_widget;
+							active_widget = (widget_i*)&history;
+						}
+					}
+					
+					bool const input_was_consumed = active_widget->process_input( key );
+					if ( not input_was_consumed ) {
+					// TODO: refactor into tui_app_t
+					//	if ( key_pressed == 'x' )  // terminate when "x" is pressed
+					//		*is_running= false;
+						if ( key == 's' )
+							is_stepping = not is_stepping; // flip
+						else if ( is_stepping and key == 'n' )
+							should_step = true;
+					}
+				}
+				else keyboard_w.clear();
 				std::this_thread::sleep_for( 5ms );
 			}
 		}
 	);
 	
-	logger.push( "Starting 6502 simulation thread" );
+	logger.push( "Starting CPU sim thread" );
 	auto cpu_thread = std::jthread(
 		[&is_running,&is_stepping,&should_step,&system] {
 			while ( is_running )
@@ -2732,8 +3785,10 @@ main( int const argc, char const *const argv[] )
 				if ( false ) // TODO
 					for ( auto *w: widgets )
 						w->redraw( w==active_widget );
-				for ( auto *w: widgets )
+				for ( auto *w: widgets ) {
 					w->update( w==active_widget );
+					w->draw( w==active_widget );
+				}
 				std::this_thread::sleep_for(frame_length_ms);
 			}
 		}
@@ -2745,7 +3800,8 @@ main( int const argc, char const *const argv[] )
 		std::this_thread::sleep_for( 5ms );
 	}
 	
-	logger.push( "Exit signal received. Exiting..." );
+	logger.push( "Exit signal received" );
+	logger.push( "Exiting..." );
 	// TODO: save logs to file
 	std::this_thread::sleep_for(1s); // temp
 	return 0;
