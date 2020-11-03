@@ -2159,13 +2159,13 @@ struct history_log_t final: public widget_i
 			entries_to_print = rows;
 		
 		for ( u8 i=0; i<entries_to_print; ++i ) {
-			auto const e    = system->get_history().peek(i);
+			auto const e = system->get_history().peek(i);
 			std::printf( "%s" "│" "%s" "\033[38m" "%04" PRIX16 " ", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), (i==0? CROSS_CLR : "\033[0m"), e.addr );
 			system_t::print_asm( e.op, e.arg1, e.arg2 );
-			std::printf( "\033[38;5;240m" " ;" "\033[90m%" PRIu8 " cycles" "%s" "│" "\033[B\033[%uG", e.cycles, (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), x );
+			std::printf( "\033[38;5;240m" " ;" "\033[90m%" PRIu8 " cycles" "\033[0m" "%s" "│" "\033[B\033[%uG", e.cycles, (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), x );
 		}
 		for ( u8 i=rows-entries_to_print; i; --i )
-			std::printf( "%s" "│                           │" "\033[B\033[%uG", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), x );
+			std::printf( "\033[0m" "%s" "│                           │" "\033[B\033[%uG", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), x );
 		std::printf(    "%s" "╰───────────────────────────╯", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER) );
 	}
 private:
@@ -3127,7 +3127,7 @@ struct mem_edit_widget_t final: public widget_i
 				if ( is_active_row )
 					std::printf( "%s" "%02" PRIX8 "%s" "%s", ((col==curr_col)? (is_hex_mode? "\033[1;93;48;5;235m" : BRT_CLR) : MED_CLR), curr_byte, ((col==curr_col)? CROSS_CLR:""), col==0xF?"\033[1C":" " );
 				else {
-					std::printf( "%s" "%02" PRIX8 "\033[0m" "%s" "%s", (is_hex_mode? (col==curr_col? CROSS_CLR MED_CLR : BRT_CLR) : DIM_CLR), curr_byte, bg_col, col==0xF?"\033[1C":" " );
+					std::printf( "%s" "%02" PRIX8 "\033[0m" "%s" "%s", (is_hex_mode? (col==curr_col? CROSS_CLR MED_CLR : MED_CLR) : DIM_CLR), curr_byte, bg_col, col==0xF?"\033[1C":" " );
 				}
 			}
 			// ascii cols:
