@@ -315,6 +315,10 @@ struct cyclic_stack_t final
 			_head     = other._head;
 			_data     = new T[_capacity];
 			// deep copy:
+			// TEMP FIX:
+			for ( u64 i=0; i<_capacity; ++i)
+				_data[i] = other._data[i];
+			// TODO: fix old version:
 			for ( u64 tail=(_capacity+_head-_size)%_capacity, i=0; i<_size; ++i ) {
 				u64 idx = (tail+i) % _capacity;
 				_data[idx] = other._data[idx];
@@ -1965,8 +1969,6 @@ struct vertical_scrollbar_widget_t // final: public widget_i
 		if ( curr_top_row == 0 and height >= total_rows ) // TODO: verify
 			return;
 		else {
-			auto const *rail_color    = BRT_CLR;
-			auto const *slider_color  = ACTIVE_OUTER_BORDER;
 			auto const  slider_height = (u16)(((f32)height/total_rows)*height);
 			auto const  remainder     = height - slider_height;
 			auto const  max_top_row   = total_rows - height;
@@ -1999,12 +2001,14 @@ struct vertical_scrollbar_widget_t // final: public widget_i
 	}
 	
 	u16 x, y, height, curr_top_row, total_rows;
-	char const *rail_top   = "╻";
-	char const *rail_mid   = "┃";
-	char const *rail_bot   = "╹";
-	char const *slider_top = "█";
-	char const *slider_mid = "█";
-	char const *slider_bot = "█";
+	char const *rail_top     = "│"; //"┃"; //"╻";
+	char const *rail_mid     = "│"; //"┃";
+	char const *rail_bot     = "│"; //"┃"; //"╹";
+	char const *rail_color   = ACTIVE_OUTER_BORDER;
+	char const *slider_color = BRT_CLR; 
+	char const *slider_top   = "█";
+	char const *slider_mid   = "█";
+	char const *slider_bot   = "█";
 };
 
 
@@ -2243,11 +2247,28 @@ struct instruction_history_widget_t final: public widget_i
 	void
 	update( bool is_active ) noexcept final
 	{
+		scrollbar.y      = y+1;
+		scrollbar.x      = x+width+1;
+		scrollbar.height = rows;
 	}
 	
 	auto
-	process_input( int input ) -> bool final
+	process_input( int key ) -> bool final
 	{
+		assert( system );
+		switch( key ) {
+			case KEY_UP    : { _dec_row(1);     break; } 
+			case KEY_DOWN  : { _inc_row(1);     break; }
+			case KEY_PPAGE : { _dec_row(rows);  break; }
+			case KEY_NPAGE : { _inc_row(rows);  break; }
+			case KEY_HOME  : { curr_row=0;      break; }
+			case KEY_END   : {
+				curr_row=system->get_history().size();
+				if ( curr_row )
+					--curr_row;
+				break;
+			}
+		}
 		return false;
 	}
 	
@@ -2261,6 +2282,8 @@ struct instruction_history_widget_t final: public widget_i
 	{
 		assert( system );
 		
+		update(is_active); // TEMP
+	/*	
 		std::printf( "\033[?25l\033[%u;%uH" "%s" "╭───────────────────────────╮" "\033[B\033[%uG", y, x, (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), x ); 
 		
 		u8 entries_to_print = system->get_history().size();
@@ -2276,6 +2299,36 @@ struct instruction_history_widget_t final: public widget_i
 		for ( u8 i=rows-entries_to_print; i; --i )
 			std::printf( "\033[0m" "%s" "│                           │" "\033[B\033[%uG", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), x );
 		std::printf(    "%s" "╰───────────────────────────╯", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER) );
+	
+*/
+		// clearing & border
+		auto const *outer_border_color = (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER );
+		std::printf( "\033[%u;%uH" "%s" "╭───────────────────────────╮" "\033[B\033[%uG", y, x, outer_border_color, x ); 
+		for ( u16 row=0; row<rows; ++row )
+			std::printf( "%s│%*s%s│\033[B\033[%uG", outer_border_color, width, "", outer_border_color, x );
+		std::printf( "%s╰───────────────────────────╯", outer_border_color );
+	
+		auto const &history = system->get_history();
+		u8 entries_to_print = history.size() - curr_row;
+		if ( entries_to_print > rows )
+			entries_to_print = rows;
+			
+		// printing actual messages
+		std::printf( "\033[%u;%uH", y+1, x+1 ); 
+		for ( u8 i=0; i<entries_to_print; ++i ) {
+			auto const &e = history.peek(curr_row+i);
+			std::printf( "%s" "\033[38m" "%04" PRIX16 " ", (i==0? CROSS_CLR : "\033[0m"), e.addr );
+			system_t::print_asm( e.op, e.arg1, e.arg2 );
+			std::printf( "\033[38;5;240m" " ;" "\033[90m%" PRIu8 " cycles" "\033[0m" "\033[B\033[%uG", e.cycles, x+1 );
+			/*
+			std::printf( "%s" "│" "%s" "\033[1;33m%s" "%*s\033[%uG" "\033[37m%-.*s", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), (i==0? CROSS_CLR : ""), e.timestamp(), width-9, "", x+11, width-9, e.msg() );
+			std::printf( "\033[%uG" "\033[0m" "%s" "│" "\033[B\033[%uG", x+width+1, (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), x );*/
+		}
+		
+		scrollbar.curr_top_row = curr_row;
+		scrollbar.total_rows   = history.size() + rows;
+		if ( entries_to_print and is_active )
+			scrollbar.draw();
 	}
 	
 	inline void
@@ -2291,10 +2344,35 @@ struct instruction_history_widget_t final: public widget_i
 	}
 	
 private:
-	system_t const *system = nullptr;
-	u16             rows   = 0;
-	u8              x      = 0,
-	                y      = 0;
+	static u16 constexpr width = 27;
+	
+	vertical_scrollbar_widget_t  scrollbar;
+	system_t const              *system   = nullptr;
+	u16                          rows     = 0;
+	u8                           x        = 0,
+	                             y        = 0;
+	u16                          curr_row = 0;
+	
+	inline void
+	_dec_row( u16 const n ) noexcept
+	{
+		if ( n < curr_row )
+			curr_row -= n;
+		else
+			curr_row = 0;
+	}
+	
+	inline void
+	_inc_row( u16 const n ) noexcept
+	{
+		assert( system );
+		auto const &history = system->get_history();
+		curr_row += n;
+		if ( history.size() == 0 )
+			curr_row = 0;
+		else if ( curr_row >= history.size() )
+			curr_row = history.size() - 1;
+	}
 };
 
 
@@ -2617,7 +2695,7 @@ struct logger_widget_t final: public widget_i
 	update( bool is_active ) noexcept final
 	{
 		scrollbar.y      = y+1;
-		scrollbar.x      = x+width;
+		scrollbar.x      = x+width+1;
 		scrollbar.height = rows;
 	}
 	
@@ -2662,10 +2740,11 @@ struct logger_widget_t final: public widget_i
 		
 		char const *border_color = is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER;
 		
+		// clearing
 		std::printf( "\033[%u;%uH" "%s" "%s" "\033[B\033[%uG", y, x, border_color, hdr, x ); 
 		for ( u16 row=0; row<rows; ++row )
 			std::printf( "%s│%*s%s│\033[B\033[%uG", border_color, width, "", border_color,x );
-		std::printf( "%s%s", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), ftr );
+		std::printf( "%s%s", border_color, ftr );
 		
 		u8 entries_to_print = entries.size() - curr_row;
 		if ( entries_to_print > rows )
@@ -2675,8 +2754,8 @@ struct logger_widget_t final: public widget_i
 		std::printf( "\033[%u;%uH", y+1, x ); 
 		for ( u8 i=0; i<entries_to_print; ++i ) {
 			auto const &e = entries.peek(curr_row+i);
-			std::printf( "%s" "│" "%s" "\033[1;33m%s" "%*s\033[%uG" "\033[37m%-.*s", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), (i==0? CROSS_CLR : ""), e.timestamp(), width-9, "", x+11, width-9, e.msg() );
-			std::printf( "\033[%uG" "\033[0m" "%s" "│" "\033[B\033[%uG", x+width+1, (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), x );
+			std::printf( "%s" "│" "%s" "\033[1;33m%s" "%*s\033[%uG" "\033[37m%-.*s", border_color, (i==0? CROSS_CLR : ""), e.timestamp(), width-8, "", x+11, width-9, e.msg() );
+			std::printf( "\033[%uG" "\033[0m" "%s" "│" "\033[B\033[%uG", x+width+1, border_color, x );
 		}
 		
 		scrollbar.curr_top_row = curr_row;
@@ -3830,23 +3909,10 @@ main( int const argc, char const *const argv[] )
 	
 	std::optional<newbie_info_widget_t> maybe_newbie_info = {};
 	if ( is_newbie_mode ) {
-		logger.set_rows(  6 );
-		maybe_newbie_info = newbie_info_widget_t { &active_widget, 15, 159, 16 };
+		logger.set_rows( 9 );
+		maybe_newbie_info = newbie_info_widget_t { &active_widget, 18, 159, 13 };
 	}
-	logger.push( "Test" );
-	logger.push( "Test" );
-	logger.push( "Test" );
-	logger.push( "Test" );
-	logger.push( "Test" );
-	logger.push( "Test" );
-	logger.push( "Test" );
-	logger.push( "Test" );
-	logger.push( "Test" );
-	logger.push( "Test" );
-	logger.push( "Test" );
-	logger.push( "Test" );
-	logger.push( "Test" );
-	logger.push( "Test" );
+	
 	logger.push( "Widgets loaded!" );
 	
 	system.get_cpu().Hz = argc > 3? std::atoi(argv[3]) : 500;
