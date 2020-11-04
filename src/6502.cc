@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <chrono>
+#include <vector>
 #include <thread>
 #include <utility>
 #include <memory>
@@ -72,6 +73,9 @@ using f32 = float;
 // TODO: Memory display modes? HEX/ASCII
 // TODO: Keyboard input
 // TODO: Only update changes in widgets instead of reprinting them
+// TODO: search memory in memory editor
+// TODO: watch list for memory in memory editor (change? view?)
+// TODO: breakpoints for memory in memory editor
 // TODO: Colour code memory values based on access frequency and temporal proximity
 // TODO: Memcopy command-line arg ROM file into system RAM
 // TODO: Do more testing	
@@ -1909,6 +1913,21 @@ public:
 
 
 
+enum struct widget_type_e: u8 {
+	terminal,
+	logger,
+	keyboard,
+	instruction_history,
+	memory_editor,
+	addr_prompt,
+	num_prompt,
+	program_execution_viewer,
+	stack_viewer,
+	ram_page_viewer,
+	cpu_info,
+	newbie_info
+};
+
 struct widget_i
 {
 	virtual ~widget_i() {}
@@ -1916,7 +1935,78 @@ struct widget_i
 	virtual void redraw( bool is_active )     = 0;
 	virtual void draw(   bool is_active )     = 0;
 	virtual void update( bool is_active )     = 0;
+	[[nodiscard]] virtual auto get_widget_type() const noexcept -> widget_type_e = 0;
 };
+
+
+
+struct vertical_scrollbar_widget_t // final: public widget_i
+{
+/*
+	void
+	update( bool is_active ) noexcept final
+	{
+	}
+	
+	auto
+	process_input( int key ) -> bool final
+	{
+		return false;
+	}
+	
+	void
+	redraw( bool is_active ) noexcept final
+	{
+	}
+*/
+	void
+	draw( /*bool is_active*/ ) noexcept // final
+	{
+		if ( curr_top_row == 0 and height >= total_rows ) // TODO: verify
+			return;
+		else {
+			auto const *rail_color    = BRT_CLR;
+			auto const *slider_color  = ACTIVE_OUTER_BORDER;
+			auto const  slider_height = (u16)(((f32)height/total_rows)*height);
+			auto const  remainder     = height - slider_height;
+			auto const  max_top_row   = total_rows - height;
+			auto const  gap_above     = (u16)((f32)curr_top_row / max_top_row * remainder);
+			auto const  gap_below     = height - slider_height - gap_above - 1;
+//			std::printf( "\033[0m\033[0;30H H:%u, TR:%u, SH:%u, R:%u, MTR:%u, GA:%u, GB:%u", height, total_rows, slider_height, remainder, max_top_row, gap_above, gap_below); // DEBUG
+
+			std::printf( "\033[0m\033[%u;%uH", y, x ); // go to top
+			auto curr_row = 0;
+			if ( gap_above > 0 )
+				std::printf( "%s%s\033[%u;%uH", rail_color, rail_top, y+(++curr_row), x );
+			for ( u16 row=1; row<gap_above; ++row )
+				std::printf( "%s%s\033[%u;%uH", rail_color, rail_mid, y+(++curr_row), x );
+			
+			std::printf( "%s%s\033[%u;%uH", slider_color, slider_top, y+(++curr_row), x );
+			for ( u16 row=1; row<=slider_height; ++row )
+				if ( row<slider_height )
+					std::printf( "%s%s\033[%u;%uH", slider_color, slider_mid, y+(++curr_row), x );
+				else
+					std::printf( "%s%s\033[%u;%uH", slider_color, slider_bot, y+(++curr_row), x );
+			
+			for ( u16 row=1; row<=gap_below; ++row ) 
+				if ( row != gap_below )
+					std::printf( "%s%s\033[%u;%uH", rail_color, rail_mid, y+(++curr_row), x );
+				else
+					std::printf( "%s%s", rail_color, rail_bot );
+			
+			assert( curr_row <= height );
+		}
+	}
+	
+	u16 x, y, height, curr_top_row, total_rows;
+	char const *rail_top   = "╻";
+	char const *rail_mid   = "┃";
+	char const *rail_bot   = "╹";
+	char const *slider_top = "█";
+	char const *slider_mid = "█";
+	char const *slider_bot = "█";
+};
+
 
 
 /* DEPRECATED
@@ -1955,15 +2045,21 @@ struct cpu_debug_15x10_display_t final: public widget_i
 };
 */
 
-struct cpu_debug_82x4_display_t final: public widget_i
+struct cpu_info_widget_t final: public widget_i
 {
-	cpu_debug_82x4_display_t() noexcept = default;
+	cpu_info_widget_t() noexcept = default;
 	
-	cpu_debug_82x4_display_t( cpu::cpu_t const *CPU, u8 x, u8 y ) noexcept:
+	cpu_info_widget_t( cpu::cpu_t const *CPU, u8 x, u8 y ) noexcept:
 		widget_i(), CPU(CPU), x(x), y(y)
 	{}
 	
-	~cpu_debug_82x4_display_t() noexcept final = default;
+	~cpu_info_widget_t() noexcept final = default;
+	
+	[[nodiscard]] auto
+	get_widget_type() const noexcept -> widget_type_e final
+	{
+		return widget_type_e::cpu_info;
+	}
 	
 	void
 	update( bool is_active ) noexcept final
@@ -1996,12 +2092,12 @@ struct cpu_debug_82x4_display_t final: public widget_i
 		while ( tmp /= 10 )
 			++cc_digits;
 		
-		std::printf( "\033[?25l\033[%u;%uH", y, x ); 
-		std::printf( "%s"
+		std::printf( "\033[?25l\033[%u;%uH" "%s"
 			"╭────┰────────────────┰──────┰────┰────┰────┰────┰──────────┰──────────────────────╮"  "\033[B\033[84D"
 			"│ " LABEL    "F:"       "%s ┃ " LABEL "N V BB D I Z C"   "%s ┃ " LABEL   "PC: "       "%s ┃ " LABEL    "S:"       "%s ┃ " LABEL   "A:"        "%s ┃ " LABEL   "X:"        "%s ┃ " LABEL   "Y:"        "%s ┃ " LABEL   "Clk.Spd:"                "%s ┃ " LABEL   "Elapsed Cycle Count:"    "%s │" "\033[B\033[84D"
 			"│ " BRT_CLR "%02" PRIX8 "%s ┃ " "%s %s %s%s %s %s %s %s" "%s ┃ " BRT_CLR "%04" PRIX16 "%s ┃ " BRT_CLR "%02" PRIX8 "%s ┃ " BRT_CLR "%02" PRIX8 "%s ┃ " BRT_CLR "%02" PRIX8 "%s ┃ " BRT_CLR "%02" PRIX8 "%s ┃ " BRT_CLR "%5" PRIu16 MED_CLR " Hz" "%s ┃ " DIM_CLR "%0*d" BRT_CLR "%" PRIu64 "%s │" "\033[B\033[84D"
 			"╰────┸────────────────┸──────┸────┸────┸────┸────┸──────────┸──────────────────────╯",
+			y, x,
 			(is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER),
 			(is_active? ACTIVE_INNER_BORDER : INACTIVE_INNER_BORDER),
 			(is_active? ACTIVE_INNER_BORDER : INACTIVE_INNER_BORDER),
@@ -2041,6 +2137,7 @@ private:
 };
 
 
+
 // removes most unwanted ASCII-symbols (returns 0xFF character if encountered)
 [[nodiscard]] inline auto
 is_presentable_symbol( u8 const c ) noexcept -> bool
@@ -2048,20 +2145,27 @@ is_presentable_symbol( u8 const c ) noexcept -> bool
 	return c > 0x1F and c < 0x7F;
 }
 
+
+
 constexpr char unpresentable_symbol_terminal[]   = "?";
 constexpr char unpresentable_symbol_hex_editor[] = "·";
 
-
 template <u8 width, u8 height>
-struct terminal_display_t final: public widget_i
+struct terminal_widget_t final: public widget_i
 {
-	terminal_display_t() noexcept = default;
+	terminal_widget_t() noexcept = default;
 	
-	terminal_display_t( u8 const *block_start, u8 x, u8 y ):
+	terminal_widget_t( u8 const *block_start, u8 x, u8 y ):
 		block_start(block_start), x(x), y(y)
 	{}
 	
-	~terminal_display_t() noexcept final = default;
+	~terminal_widget_t() noexcept final = default;
+	
+	[[nodiscard]] auto
+	get_widget_type() const noexcept -> widget_type_e final
+	{
+		return widget_type_e::terminal;
+	}
 	
 	void
 	update( bool is_active ) noexcept final
@@ -2120,16 +2224,21 @@ private:
 
 
 
-template <u8 rows>
-struct history_log_t final: public widget_i
+struct instruction_history_widget_t final: public widget_i
 {
-	history_log_t() noexcept = default;
+	instruction_history_widget_t() noexcept = default;
 	
-	history_log_t( system_t const *system, u8 x, u8 y ):
-		widget_i(), system(system), x(x), y(y)
+	instruction_history_widget_t( system_t const *system, u16 rows, u8 x, u8 y ):
+		widget_i(), system(system), rows(rows), x(x), y(y)
 	{}
 	
-	~history_log_t() noexcept final = default;
+	~instruction_history_widget_t() noexcept final = default;
+	
+	[[nodiscard]] auto
+	get_widget_type() const noexcept -> widget_type_e final
+	{
+		return widget_type_e::instruction_history;
+	}
 	
 	void
 	update( bool is_active ) noexcept final
@@ -2168,23 +2277,43 @@ struct history_log_t final: public widget_i
 			std::printf( "\033[0m" "%s" "│                           │" "\033[B\033[%uG", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), x );
 		std::printf(    "%s" "╰───────────────────────────╯", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER) );
 	}
+	
+	inline void
+	set_rows( u16 const new_rows ) noexcept
+	{
+		rows = new_rows;
+	}
+	
+	[[nodiscard]] inline auto
+	get_rows() const noexcept -> u16
+	{
+		return rows;
+	}
+	
 private:
 	system_t const *system = nullptr;
+	u16             rows   = 0;
 	u8              x      = 0,
 	                y      = 0;
 };
 
 
 
-struct stack_hex_display_t final: public widget_i
+struct stack_viewer_widget_t final: public widget_i
 {
-	stack_hex_display_t() noexcept = default;
+	stack_viewer_widget_t() noexcept = default;
 	
-	stack_hex_display_t( system_t const *system, u16 x, u16 y ) noexcept:
+	stack_viewer_widget_t( system_t const *system, u16 x, u16 y ) noexcept:
 		widget_i(), system(system), x(x), y(y)
 	{}
 	
-	~stack_hex_display_t() noexcept final = default;
+	~stack_viewer_widget_t() noexcept final = default;
+	
+	[[nodiscard]] auto
+	get_widget_type() const noexcept -> widget_type_e final
+	{
+		return widget_type_e::stack_viewer;
+	}
 	
 	void
 	update( bool is_active ) noexcept final
@@ -2239,15 +2368,21 @@ private:
 
 
 
-struct ram_page_hex_display_t final: public widget_i
+struct ram_page_viewer_widget_t final: public widget_i
 {
-	ram_page_hex_display_t() noexcept = default;
+	ram_page_viewer_widget_t() noexcept = default;
 	
-	ram_page_hex_display_t( system_t const *system, u8 page_no, u16 x, u16 y ) noexcept:
+	ram_page_viewer_widget_t( system_t const *system, u8 page_no, u16 x, u16 y ) noexcept:
 		widget_i(), system(system), page_no(page_no), x(x), y(y)
 	{}
 	
-	~ram_page_hex_display_t() noexcept final = default;
+	~ram_page_viewer_widget_t() noexcept final = default;
+	
+	[[nodiscard]] auto
+	get_widget_type() const noexcept -> widget_type_e final
+	{
+		return widget_type_e::ram_page_viewer;
+	}
 	
 	void
 	update( bool is_active ) noexcept final
@@ -2309,15 +2444,21 @@ private:
 
 // TODO: proper hex+ascii editor 
 
-struct program_hex_display_t final: public widget_i
+struct program_execution_viewer_widget_t final: public widget_i
 {
-	program_hex_display_t () noexcept = default;
+	program_execution_viewer_widget_t () noexcept = default;
 	
-	program_hex_display_t ( system_t const *system, u16 x, u16 y ) noexcept:
+	program_execution_viewer_widget_t ( system_t const *system, u16 x, u16 y ) noexcept:
 		widget_i(), system(system), x(x), y(y)
 	{}
 	
-	~program_hex_display_t () noexcept final = default;
+	~program_execution_viewer_widget_t () noexcept final = default;
+	
+	[[nodiscard]] auto
+	get_widget_type() const noexcept -> widget_type_e final
+	{
+		return widget_type_e::program_execution_viewer;
+	}
 	
 	void
 	update( bool is_active ) noexcept final
@@ -2399,6 +2540,8 @@ private:
 	u16 x=0, y=0;
 };
 
+
+
 struct log_entry_t
 {
 	log_entry_t() noexcept = default;
@@ -2453,33 +2596,50 @@ private:
 
 using log_stack_t = cyclic_stack_t<log_entry_t>;
 
-template <u8 rows, u8 width>
-struct log_widget_t final: public widget_i
+struct logger_widget_t final: public widget_i
 {
-	log_widget_t () noexcept = default;
+	logger_widget_t () noexcept = default;
 	
-	log_widget_t ( u16 x, u16 y ) noexcept:
-		widget_i(), entries(rows), x(x), y(y)
+	logger_widget_t ( u16 rows, u16 capacity,  u16 x, u16 y ) noexcept:
+		widget_i(), rows(rows), entries(capacity), x(x), y(y)
 	{
 	}
 	
-	~log_widget_t () noexcept final = default;
+	~logger_widget_t () noexcept final = default;
+	
+	[[nodiscard]] auto
+	get_widget_type() const noexcept -> widget_type_e final
+	{
+		return widget_type_e::logger;
+	}
 	
 	void
 	update( bool is_active ) noexcept final
 	{
+		scrollbar.y      = y+1;
+		scrollbar.x      = x+width;
+		scrollbar.height = rows;
 	}
 	
 	auto
-	process_input( int input ) -> bool final
+	process_input( int key ) -> bool final
 	{
+		switch( key ) {
+			case KEY_UP    : { _dec_row(1);               break; } 
+			case KEY_DOWN  : { _inc_row(1);               break; }
+			case KEY_PPAGE : { _dec_row(rows);            break; }
+			case KEY_NPAGE : { _inc_row(rows);            break; }
+			case KEY_HOME  : { curr_row=0;                break; }
+			case KEY_END   : { curr_row=entries.size()-1; break; }
+		}
 		return false;
 	}
 	
 	inline void
 	push( char const *msg ) noexcept
 	{
-		entries.push(msg);	
+		entries.push(msg);
+		curr_row = 0;
 	}
 	
 	void
@@ -2490,6 +2650,7 @@ struct log_widget_t final: public widget_i
 	void
 	draw( bool is_active ) noexcept final
 	{
+		update(is_active); // TEMP
 		// TODO: add support for line break if message is too long for the width
 		static char hdr[3*(width+2)+1],
 		            ftr[3*(width+2)+1];
@@ -2499,26 +2660,66 @@ struct log_widget_t final: public widget_i
 			init_ftr(ftr,width)
 		}; (void) all_initialized;
 		
-		std::printf( "\033[?25l\033[%u;%uH" "%s" "%s" "\033[B\033[%uG", y, x, (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), hdr, x ); 
+		char const *border_color = is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER;
 		
-		u8 entries_to_print = entries.size();
+		std::printf( "\033[%u;%uH" "%s" "%s" "\033[B\033[%uG", y, x, border_color, hdr, x ); 
+		for ( u16 row=0; row<rows; ++row )
+			std::printf( "%s│%*s%s│\033[B\033[%uG", border_color, width, "", border_color,x );
+		std::printf( "%s%s", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), ftr );
+		
+		u8 entries_to_print = entries.size() - curr_row;
 		if ( entries_to_print > rows )
 			entries_to_print = rows;
-		
+			
+		// printing actual messages
+		std::printf( "\033[%u;%uH", y+1, x ); 
 		for ( u8 i=0; i<entries_to_print; ++i ) {
-			auto const &e = entries.peek(i);
-			std::printf( "%s" "│\033[1;33m%s" " \033[37m%-.*s", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), e.timestamp(), width-9, e.msg() );
-			std::printf( "\033[%uG" "%s" "│" "\033[B\033[%uG", x+width+1, (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), x );
+			auto const &e = entries.peek(curr_row+i);
+			std::printf( "%s" "│" "%s" "\033[1;33m%s" "%*s\033[%uG" "\033[37m%-.*s", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), (i==0? CROSS_CLR : ""), e.timestamp(), width-9, "", x+11, width-9, e.msg() );
+			std::printf( "\033[%uG" "\033[0m" "%s" "│" "\033[B\033[%uG", x+width+1, (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), x );
 		}
 		
-		for ( u8 i=rows-entries_to_print; i; --i )
-			std::printf( "%s" "│" "\033[%uC" "│" "\033[B\033[%uG", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), width, x );
-		std::printf( "%s" "%s", (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER), ftr );
+		scrollbar.curr_top_row = curr_row;
+		scrollbar.total_rows   = entries.size() + rows;
+		if ( is_active )
+			scrollbar.draw();
+	}
+	
+	inline void
+	set_rows( u16 const new_rows ) noexcept
+	{
+		rows = new_rows;
+	}
+	
+	[[nodiscard]] inline auto
+	get_rows() const noexcept -> u16
+	{
+		return rows;
 	}
 	
 private:
-	log_stack_t entries;
-	u16         x=0, y=0;
+	static inline u16 constexpr width = 35; // 29?
+	vertical_scrollbar_widget_t  scrollbar;
+	u16                          rows=0,curr_row=0;
+	log_stack_t                  entries;
+	u16                          x=0, y=0;
+	
+	inline void
+	_dec_row( u16 const n ) noexcept
+	{
+		if ( n < curr_row )
+			curr_row -= n;
+		else
+			curr_row = 0;
+	}
+	
+	inline void
+	_inc_row( u16 const n ) noexcept
+	{
+		curr_row += n;
+		if ( curr_row >= entries.size() )
+			curr_row = entries.size() - 1;
+	}
 };
 
 
@@ -2562,6 +2763,12 @@ struct num_prompt_widget_t final: public widget_i
 	num_prompt_widget_t( u8 &num, bool is_hex_mode, u16 x, u16 y ) noexcept:
 		widget_i(), is_hex_mode(is_hex_mode), num_ptr(&num), x(x), y(y)
 	{
+	}
+	
+	[[nodiscard]] auto
+	get_widget_type() const noexcept -> widget_type_e final
+	{
+		return widget_type_e::num_prompt;
 	}
 	
 	auto
@@ -2685,6 +2892,12 @@ struct addr_prompt_widget_t final: public widget_i
 	addr_prompt_widget_t( u16 &addr, u16 x, u16 y ) noexcept:
 		widget_i(), addr_ptr(&addr), x(x), y(y)
 	{
+	}
+	
+	[[nodiscard]] auto
+	get_widget_type() const noexcept -> widget_type_e final
+	{
+		return widget_type_e::addr_prompt;
 	}
 	
 	auto
@@ -2885,21 +3098,27 @@ private:
 */
 
 template <u8 rows>
-struct mem_edit_widget_t final: public widget_i
+struct memory_editor_widget_t final: public widget_i
 {
-	mem_edit_widget_t ( mem_edit_widget_t const & ) = delete;
-	mem_edit_widget_t ( mem_edit_widget_t      && ) = default;
+	memory_editor_widget_t ( memory_editor_widget_t const & ) = delete;
+	memory_editor_widget_t ( memory_editor_widget_t      && ) = default;
 //		widget_i(), system(system), x(x), (y) {}
 	
-	mem_edit_widget_t () noexcept = default;
+	memory_editor_widget_t () noexcept = default;
 	
-	mem_edit_widget_t ( system_t *system, u16 x, u16 y ) noexcept:
+	memory_editor_widget_t ( system_t *system, u16 x, u16 y ) noexcept:
 		widget_i(), system(system), x(x), y(y)
 	{
 		_ensure_in_display_bounds();
 	}
 	
-	~mem_edit_widget_t () noexcept final = default;
+	~memory_editor_widget_t () noexcept final = default;
+	
+	[[nodiscard]] auto
+	get_widget_type() const noexcept -> widget_type_e final
+	{
+		return widget_type_e::memory_editor;
+	}
 	
 	void
 	update( bool is_active ) noexcept final
@@ -3197,7 +3416,7 @@ private:
 		auto constexpr goto_next_line   = "\033[B\033[71D";
 		auto const    *outer_border_clr = (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER );
 		auto const    *inner_border_clr = (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER );
-		std::printf( "\033[?25l\033[%u;%uH" "%s", y, x, outer_border_clr );
+		std::printf( "\033[%u;%uH" "%s", y, x, outer_border_clr );
 		// print header:
 		std::printf(    "╭"   "────┰───────────────────────────────────────────────┰────────────────"   "╮%s"
 		                "│\033[4C%s┃\033[47C"                                     "┃\033[16C"         "%s│%s" 
@@ -3257,6 +3476,58 @@ private:
 				top_row_addr = curr_row + pad_offs - row_offs + 0x10;
 	}
 };
+
+
+
+struct newbie_info_widget_t final: public widget_i
+{
+	newbie_info_widget_t () noexcept = default;
+	
+	newbie_info_widget_t ( widget_i **current_widget, u16 rows, u16 x, u16 y ) noexcept:
+		widget_i(), current_widget(current_widget), rows(rows), x(x), y(y)
+	{}
+	
+	~newbie_info_widget_t () noexcept final = default;
+	
+	[[nodiscard]] auto
+	get_widget_type() const noexcept -> widget_type_e final
+	{
+		return widget_type_e::newbie_info;
+	}
+	
+	void
+	update( bool is_active ) noexcept final
+	{
+	}
+	
+	auto
+	process_input( int key ) -> bool final
+	{
+		return false;
+	}
+	
+	void
+	redraw( bool is_active ) noexcept final
+	{
+	}
+	
+	void
+	draw( bool is_active ) noexcept final
+	{
+		auto constexpr goto_next_line   = "\033[B\033[37D";
+		auto const    *outer_border_clr = (is_active? ACTIVE_OUTER_BORDER : INACTIVE_OUTER_BORDER );
+		std::printf(    "\033[%u;%uH%s"
+		                "╭───────────────────────────────────╮%s", y, x, outer_border_clr, goto_next_line );
+		for ( u16 row=0; row<rows; ++row )
+			std::printf( "│\033[35C"                         "│%s", goto_next_line );
+		std::printf(    "╰───────────────────────────────────╯" );
+	}
+
+private:
+	widget_i **current_widget = nullptr;
+	u16        rows=0, x=0, y=0;
+};
+
 
 
 [[nodiscard]] constexpr auto
@@ -3472,6 +3743,7 @@ KEY_UNDO	Undo key
 }
 
 
+
 struct keyboard_widget_t final: public widget_i
 {
 	keyboard_widget_t () noexcept = default;
@@ -3481,6 +3753,12 @@ struct keyboard_widget_t final: public widget_i
 	{}
 	
 	~keyboard_widget_t () noexcept final = default;
+	
+	[[nodiscard]] auto
+	get_widget_type() const noexcept -> widget_type_e final
+	{
+		return widget_type_e::keyboard;
+	}
 	
 	void
 	update( bool is_active ) noexcept final
@@ -3520,36 +3798,60 @@ private:
 	u16       x=0, y=0;
 };
 
+
+
 int
 main( int const argc, char const *const argv[] )
 {
-	bool  is_running     = true;
-	bool  is_stepping    = true;
-	bool  is_in_nav_mode = false;
-	bool  should_step    = false;
-	auto  app            = tui_app_t                 {};
-	auto  system         = system_t                  {};
-	u8   *keyboard_port  = system.get_ram()+0xFF01;
-	u8   *display_block  = system.get_ram()+0x1000;
-	auto  logger         = log_widget_t<29,35>       {                     159,  2 };
+	bool  is_running        = true;
+	bool  is_stepping       = true;
+	bool  is_in_nav_mode    = false;
+	bool  should_step       = false;
+	bool  is_newbie_mode    = true;
+	auto  app               = tui_app_t                         {};
+	auto  system            = system_t                          {};
+	u8   *keyboard_port     = system.get_ram()+0xFF01;
+	u8   *display_block     = system.get_ram()+0x1000;
+	auto  keyboard          = keyboard_t                        { keyboard_port               };
+	auto  logger            = logger_widget_t                   { 29, 80,             159,  2 };
 	logger.push( "Initializing..." );
 	logger.push( "Loading widgets... ");
-	auto  terminal       = terminal_display_t<80,25> { display_block,        3,  2 };
-	auto  dbg_cpu        = cpu_debug_82x4_display_t  { &system.get_cpu(),    2, 29 };
-	auto  history        = history_log_t<18>         { &system,              2, 33 };
-	auto  stk_display    = stack_hex_display_t       { &system,             87, 33 };
-	auto  zpg_display    = ram_page_hex_display_t    { &system, 0x00,      142, 33 };
-	auto  prg_display    = program_hex_display_t     { &system,             32, 33 };
-	auto  hex_editor     = mem_edit_widget_t<27>     { &system,             87,  2 };
-	auto  keyboard_w     = keyboard_widget_t         { keyboard_port,        0,  0 };
-	auto  keyboard       = keyboard_t                { keyboard_port               };
-	auto *active_widget  = (widget_i*)&terminal;	
-	auto *prev_widget    = active_widget;
+	auto  terminal          = terminal_widget_t<80,25>          { display_block,        3,  2 };
+	auto  dbg_cpu           = cpu_info_widget_t                 { &system.get_cpu(),    2, 29 };
+	auto  history           = instruction_history_widget_t      { &system, 18,          2, 33 };
+	auto  stk_display       = stack_viewer_widget_t             { &system,             87, 33 };
+	auto  zpg_display       = ram_page_viewer_widget_t          { &system, 0x00,      142, 33 };
+	auto  prg_display       = program_execution_viewer_widget_t { &system,             32, 33 };
+	auto  hex_editor        = memory_editor_widget_t<27>        { &system,             87,  2 };
+	auto  keyboard_w        = keyboard_widget_t                 { keyboard_port,        0,  0 };
+	
+	auto *active_widget     = (widget_i*)&terminal;
+	auto *prev_widget       = active_widget;
+	
+	std::optional<newbie_info_widget_t> maybe_newbie_info = {};
+	if ( is_newbie_mode ) {
+		logger.set_rows(  6 );
+		maybe_newbie_info = newbie_info_widget_t { &active_widget, 15, 159, 16 };
+	}
+	logger.push( "Test" );
+	logger.push( "Test" );
+	logger.push( "Test" );
+	logger.push( "Test" );
+	logger.push( "Test" );
+	logger.push( "Test" );
+	logger.push( "Test" );
+	logger.push( "Test" );
+	logger.push( "Test" );
+	logger.push( "Test" );
+	logger.push( "Test" );
+	logger.push( "Test" );
+	logger.push( "Test" );
+	logger.push( "Test" );
 	logger.push( "Widgets loaded!" );
 	
 	system.get_cpu().Hz = argc > 3? std::atoi(argv[3]) : 500;
 	
-	widget_i *widgets[] {
+	std::vector<widget_i*> widgets {
 		&terminal,
 		&dbg_cpu,
 		&history,
@@ -3560,7 +3862,9 @@ main( int const argc, char const *const argv[] )
 		&hex_editor,
 		&keyboard_w
 	};
-		
+	if ( maybe_newbie_info )
+		widgets.push_back( (widget_i*)&maybe_newbie_info.value() );
+	
 	logger.push( "Loading program code..." );
 	
 	if ( argc > 1 ) {
